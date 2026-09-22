@@ -1,6 +1,17 @@
 import { supabase, ensureSignedIn } from './supabase'
 import { generateRoomCode } from './roomCode'
 
+// Note: player inserts deliberately skip .select() (no RETURNING). The
+// players SELECT policy checks the room via a function that queries
+// `players` itself, and Postgres/PostgREST won't see a row just inserted by
+// the same statement when re-checking that policy for RETURNING — it comes
+// back as a false RLS-violation error even though the insert succeeded. We
+// already know every field, so build the local object instead of asking for
+// it back.
+function buildPlayer({ id, gameCode, slot, name, userId }) {
+  return { id, game_code: gameCode, slot, name, user_id: userId, genre: null, artist: null }
+}
+
 export async function hostGame(name) {
   const user = await ensureSignedIn()
 
@@ -12,14 +23,13 @@ export async function hostGame(name) {
       throw gameError
     }
 
-    const { data: player, error: playerError } = await supabase
+    const id = crypto.randomUUID()
+    const { error: playerError } = await supabase
       .from('players')
-      .insert({ game_code: code, slot: 0, name, user_id: user.id })
-      .select()
-      .single()
+      .insert({ id, game_code: code, slot: 0, name, user_id: user.id })
     if (playerError) throw playerError
 
-    return { code, player }
+    return { code, player: buildPlayer({ id, gameCode: code, slot: 0, name, userId: user.id }) }
   }
 
   throw new Error('Could not generate a free room code — try again.')
@@ -37,11 +47,10 @@ export async function joinGame(rawCode, name) {
   if (gameError) throw gameError
   if (!game) throw new Error('Room not found — check the code and try again.')
 
-  const { data: player, error: playerError } = await supabase
+  const id = crypto.randomUUID()
+  const { error: playerError } = await supabase
     .from('players')
-    .insert({ game_code: code, slot: 1, name, user_id: user.id })
-    .select()
-    .single()
+    .insert({ id, game_code: code, slot: 1, name, user_id: user.id })
   if (playerError) {
     if (playerError.message?.includes('already full')) {
       throw new Error('That room is already full.')
@@ -52,7 +61,7 @@ export async function joinGame(rawCode, name) {
     throw playerError
   }
 
-  return { code, player }
+  return { code, player: buildPlayer({ id, gameCode: code, slot: 1, name, userId: user.id }) }
 }
 
 export async function fetchPlayers(code) {

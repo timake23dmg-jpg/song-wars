@@ -129,58 +129,96 @@ alter table players enable row level security;
 alter table submissions enable row level security;
 alter table votes enable row level security;
 
+-- Helper functions used by the policies below instead of inline subqueries on
+-- `players`. A policy that queries the same table it's attached to (or that
+-- indirectly queries `players` while a `players` policy is itself being
+-- evaluated) causes Postgres to report "infinite recursion detected in
+-- policy". These are security definer, so they run as the function owner and
+-- bypass RLS internally, breaking that recursion.
+create or replace function my_player_ids()
+returns setof uuid
+language sql
+security definer
+stable
+as $$
+  select id from players where user_id = auth.uid();
+$$;
+
+create or replace function my_game_codes()
+returns setof text
+language sql
+security definer
+stable
+as $$
+  select game_code from players where user_id = auth.uid();
+$$;
+
 -- games: any signed-in (anonymous) client can create a room or read/update
 -- one it's already part of. Room codes are short-lived and not sensitive.
+drop policy if exists "games are readable by anyone signed in" on games;
 create policy "games are readable by anyone signed in" on games
   for select using (auth.uid() is not null);
 
+drop policy if exists "anyone signed in can host a room" on games;
 create policy "anyone signed in can host a room" on games
   for insert with check (auth.uid() is not null);
 
+drop policy if exists "players in the game can update it" on games;
 create policy "players in the game can update it" on games
-  for update using (
-    exists (select 1 from players where players.game_code = games.code and players.user_id = auth.uid())
-  );
+  for update using (games.code in (select my_game_codes()));
 
 -- players: visible to the other player in the same room (genre/artist picks
 -- aren't secret — only the per-round song submission is).
+drop policy if exists "players in a room can see each other" on players;
 create policy "players in a room can see each other" on players
-  for select using (
-    exists (select 1 from players p2 where p2.game_code = players.game_code and p2.user_id = auth.uid())
-  );
+  for select using (players.game_code in (select my_game_codes()));
 
+drop policy if exists "a signed-in client can join a room as itself" on players;
 create policy "a signed-in client can join a room as itself" on players
   for insert with check (auth.uid() = user_id);
 
+drop policy if exists "a player can update their own row" on players;
 create policy "a player can update their own row" on players
   for update using (auth.uid() = user_id);
 
 -- submissions: you can always read your own row. The opponent's row is only
 -- readable once `revealed` is true, which only the trigger above can set.
+drop policy if exists "read own submission always, opponent's once revealed" on submissions;
 create policy "read own submission always, opponent's once revealed" on submissions
   for select using (
-    revealed = true
-    or exists (select 1 from players where players.id = submissions.player_id and players.user_id = auth.uid())
+    revealed = true or submissions.player_id in (select my_player_ids())
   );
 
+drop policy if exists "a player can submit for themself" on submissions;
 create policy "a player can submit for themself" on submissions
-  for insert with check (
-    exists (select 1 from players where players.id = submissions.player_id and players.user_id = auth.uid())
-  );
+  for insert with check (submissions.player_id in (select my_player_ids()));
 
 -- votes: same pattern as submissions.
+drop policy if exists "read own vote always, opponent's once revealed" on votes;
 create policy "read own vote always, opponent's once revealed" on votes
   for select using (
-    revealed = true
-    or exists (select 1 from players where players.id = votes.voter_player_id and players.user_id = auth.uid())
+    revealed = true or votes.voter_player_id in (select my_player_ids())
   );
 
+drop policy if exists "a player can cast their own vote" on votes;
 create policy "a player can cast their own vote" on votes
-  for insert with check (
-    exists (select 1 from players where players.id = votes.voter_player_id and players.user_id = auth.uid())
-  );
+  for insert with check (votes.voter_player_id in (select my_player_ids()));
 
 -- ---------------------------------------------------------------------------
 -- Realtime: broadcast row changes on these tables to subscribed clients.
 -- ---------------------------------------------------------------------------
-alter publication supabase_realtime add table games, players, submissions, votes;
+do $$
+begin
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'games') then
+    alter publication supabase_realtime add table games;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'players') then
+    alter publication supabase_realtime add table players;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'submissions') then
+    alter publication supabase_realtime add table submissions;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'votes') then
+    alter publication supabase_realtime add table votes;
+  end if;
+end $$;
