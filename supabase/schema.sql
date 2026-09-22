@@ -13,7 +13,7 @@ create extension if not exists pgcrypto;
 -- ---------------------------------------------------------------------------
 create table if not exists games (
   code text primary key,
-  status text not null default 'lobby' check (status in ('lobby', 'playing', 'finished')),
+  status text not null default 'lobby' check (status in ('lobby', 'wheel', 'playing', 'finished')),
   prompts jsonb not null default '[]'::jsonb,
   round_index int not null default 0,
   round_started_at timestamptz,
