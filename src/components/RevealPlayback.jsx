@@ -14,16 +14,11 @@ export default function RevealPlayback({ submissions, order, onDone }) {
 
   const current = submissions[order[stage]]
 
-  useEffect(() => {
-    setPlayed(false)
-    return () => clearTimeout(stopTimerRef.current)
-  }, [stage])
-
   function play() {
     const el = audioRef.current
     if (!el) return
     el.currentTime = 0
-    el.play()
+    el.play().catch(() => {}) // browsers can block autoplay; the Play button below still works
     clearTimeout(stopTimerRef.current)
     stopTimerRef.current = setTimeout(() => {
       el.pause()
@@ -31,12 +26,27 @@ export default function RevealPlayback({ submissions, order, onDone }) {
     }, CLIP_SECONDS * 1000)
   }
 
+  useEffect(() => {
+    setPlayed(false)
+    play()
+    return () => clearTimeout(stopTimerRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage])
+
   function onEnded() {
     clearTimeout(stopTimerRef.current)
     setPlayed(true)
   }
 
+  function skip() {
+    clearTimeout(stopTimerRef.current)
+    audioRef.current?.pause()
+    setPlayed(true)
+  }
+
   function next() {
+    clearTimeout(stopTimerRef.current)
+    audioRef.current?.pause()
     if (stage < submissions.length - 1) {
       setStage(stage + 1)
     } else {
@@ -64,10 +74,13 @@ export default function RevealPlayback({ submissions, order, onDone }) {
 
       <div className="reveal-actions">
         <button className="btn btn-primary" onClick={play}>
-          ▶ Play clip ({CLIP_SECONDS}s)
+          ▶ Replay
+        </button>
+        <button className="btn" onClick={skip} disabled={played}>
+          ⏭ Skip
         </button>
         <button className="btn" onClick={next} disabled={!played}>
-          {stage < submissions.length - 1 ? 'Next song' : 'Continue to vote'}
+          {stage < submissions.length - 1 ? 'Next song' : 'Vote'}
         </button>
       </div>
     </div>

@@ -274,8 +274,13 @@ body {
 }
 .reveal-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   width: 100%;
+}
+.reveal-actions .btn {
+  width: auto;
+  flex: 1 1 100px;
 }
 
 /* Vote */
