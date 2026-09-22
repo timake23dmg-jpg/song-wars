@@ -205,6 +205,43 @@ create policy "a player can cast their own vote" on votes
   for insert with check (votes.voter_player_id in (select my_player_ids()));
 
 -- ---------------------------------------------------------------------------
+-- Lets a client reveal a round's submissions once the 60s pick timer has
+-- genuinely expired, even if only one (or zero) players submitted — see
+-- supabase/reveal_expired_round.sql for the full rationale.
+-- ---------------------------------------------------------------------------
+create or replace function reveal_expired_round(p_game_code text, p_round_index int)
+returns void
+language plpgsql
+security definer
+as $$
+declare
+  v_started timestamptz;
+  v_is_member boolean;
+begin
+  select round_started_at into v_started from games where code = p_game_code;
+  if v_started is null then
+    return;
+  end if;
+
+  select exists(
+    select 1 from players where game_code = p_game_code and user_id = auth.uid()
+  ) into v_is_member;
+  if not v_is_member then
+    raise exception 'not a member of this game';
+  end if;
+
+  if now() < v_started + interval '60 seconds' then
+    return;
+  end if;
+
+  update submissions set revealed = true
+  where game_code = p_game_code and round_index = p_round_index;
+end;
+$$;
+
+grant execute on function reveal_expired_round(text, int) to authenticated;
+
+-- ---------------------------------------------------------------------------
 -- Realtime: broadcast row changes on these tables to subscribed clients.
 -- ---------------------------------------------------------------------------
 do $$

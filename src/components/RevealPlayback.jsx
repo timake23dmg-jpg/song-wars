@@ -3,9 +3,10 @@ import { useEffect, useRef, useState } from 'react'
 const CLIP_SECONDS = 20 // default between the spec's 15–30s range; flag to change
 
 // Coin flip decides play order, then each clip plays as a 15–30s clip (here: a
-// fixed CLIP_SECONDS cutoff) before the other is revealed.
-export default function RevealPlayback({ submissions, onDone }) {
-  const [order] = useState(() => (Math.random() < 0.5 ? [0, 1] : [1, 0]))
+// fixed CLIP_SECONDS cutoff) before the other is revealed. `order` is computed
+// deterministically by the caller (see roundPlayOrder in lib/game.js) so both
+// devices show the same "coin flip" result instead of each picking randomly.
+export default function RevealPlayback({ submissions, order, onDone }) {
   const [stage, setStage] = useState(0) // 0 = first song, 1 = second song, 2 = done
   const [played, setPlayed] = useState(false)
   const audioRef = useRef(null)

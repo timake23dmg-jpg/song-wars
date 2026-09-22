@@ -3,8 +3,12 @@ import { searchSongs } from '../lib/itunes'
 import Timer from './Timer'
 
 // Round submission screen: search biased to the player's locked artist, preview
-// before submitting, and a 60s timer that auto-forfeits the round on expiry.
-export default function SongSearch({ player, lockedArtist, prompt, onSubmit, onForfeit }) {
+// before submitting, and a countdown that auto-forfeits the round on expiry.
+// initialSeconds lets the caller pass a server-computed remaining time (e.g.
+// derived from a shared round_started_at) instead of always starting at 60 —
+// important once two devices are involved, since a player who reaches this
+// screen a few seconds late shouldn't get a fresh full 60s.
+export default function SongSearch({ player, lockedArtist, prompt, onSubmit, onForfeit, initialSeconds = 60 }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
@@ -59,7 +63,7 @@ export default function SongSearch({ player, lockedArtist, prompt, onSubmit, onF
           <p className="eyebrow">{player}'s pick · locked to {lockedArtist}</p>
           <h2>{prompt}</h2>
         </div>
-        <Timer seconds={60} running={!submitted} onExpire={() => !submitted && onForfeit()} />
+        <Timer seconds={initialSeconds} running={!submitted} onExpire={() => !submitted && onForfeit()} />
       </div>
 
       <input
