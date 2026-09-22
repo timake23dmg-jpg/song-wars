@@ -1,5 +1,6 @@
 import { supabase, ensureSignedIn } from './supabase'
 import { generateRoomCode } from './roomCode'
+import { uuidv4 } from './uuid'
 
 // Note: player inserts deliberately skip .select() (no RETURNING). The
 // players SELECT policy checks the room via a function that queries
@@ -23,7 +24,7 @@ export async function hostGame(name) {
       throw gameError
     }
 
-    const id = crypto.randomUUID()
+    const id = uuidv4()
     const { error: playerError } = await supabase
       .from('players')
       .insert({ id, game_code: code, slot: 0, name, user_id: user.id })
@@ -47,7 +48,7 @@ export async function joinGame(rawCode, name) {
   if (gameError) throw gameError
   if (!game) throw new Error('Room not found — check the code and try again.')
 
-  const id = crypto.randomUUID()
+  const id = uuidv4()
   const { error: playerError } = await supabase
     .from('players')
     .insert({ id, game_code: code, slot: 1, name, user_id: user.id })
