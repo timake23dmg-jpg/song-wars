@@ -324,15 +324,19 @@ export default function App() {
 
       {phase === 'wheel-genre' && (
         <div className="screen">
-          <p className="eyebrow">Your wheel — 1 of 2</p>
-          <Wheel options={GENRES} label="genre" onResult={lockGenre} />
+          <Wheel options={GENRES} title="Spin for Genre" resultLabel="Your genre" onResult={lockGenre} />
         </div>
       )}
 
       {phase === 'wheel-artist' && myGenre && (
         <div className="screen">
-          <p className="eyebrow">Your wheel — 2 of 2 ({myGenre.name})</p>
-          <Wheel options={myGenre.artists} label="artist" onResult={lockArtist} />
+          <Wheel
+            options={myGenre.artists}
+            title="Spin for Artist"
+            subtitle={myGenre.name}
+            resultLabel="Your artist"
+            onResult={lockArtist}
+          />
         </div>
       )}
 

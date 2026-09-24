@@ -127,6 +127,15 @@ body {
   border-right: 10px solid transparent;
   border-top: 16px solid var(--accent);
 }
+.wheel-title {
+  margin: 0;
+  font-size: 1.3rem;
+}
+.wheel-subtitle {
+  margin: -10px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
 .wheel {
   position: relative;
   width: 260px;
@@ -136,29 +145,66 @@ body {
   border: 4px solid var(--panel);
   outline: 2px solid #33385c;
 }
+/* Positions each label radially from the wheel's true center (not the
+   bounding box's corner — that was the old bug that put labels outside the
+   circle). The outer div rotates around the center for placement; the inner
+   div gets an extra 180° flip for the bottom half of the wheel so text is
+   never upside down, per [W1]. */
 .wheel-label {
   position: absolute;
-  top: 0;
+  top: 50%;
   left: 50%;
-  width: 50%;
-  height: 50%;
-  transform-origin: 0% 100%;
-  display: flex;
-  justify-content: flex-end;
-  align-items: flex-start;
-  padding-top: 10px;
+  height: 22px;
+  margin-top: -11px;
+  transform-origin: 0% 50%;
   pointer-events: none;
 }
-.wheel-label span {
-  display: inline-block;
-  font-size: 0.65rem;
-  font-weight: 600;
-  color: #0d0f1e;
-  max-width: 70px;
-  text-align: right;
+.wheel-label-inner {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding-left: 22px;
 }
-.wheel-result {
-  margin: 0;
+.wheel-label-text {
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.72rem;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6), 0 0 5px rgba(0, 0, 0, 0.4);
+}
+
+/* Result pop-up shown for ~2s after the wheel stops, per [W4]. */
+.wheel-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 7, 15, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  padding: 16px;
+}
+.wheel-popup {
+  background: var(--panel);
+  border: 1px solid #3a3f66;
+  border-radius: 16px;
+  padding: 20px 28px;
+  text-align: center;
+  min-width: 220px;
+  max-width: 90vw;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.wheel-popup-label {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.wheel-popup-value {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text);
 }
 
 /* Timer */
