@@ -32,18 +32,25 @@ create table if not exists games (
   bonus_offer_started_at timestamptz,
   loser_player_id uuid,
   double_win boolean not null default false,
+  -- v3: party-size lobbies. mode/difficulty are host-picked in the lobby and
+  -- synced to every joiner; 'points_league' is the only implemented mode so
+  -- far (works for 2-8+ players), the rest of the v3 mode list lands later.
+  mode text not null default 'points_league',
+  difficulty text not null default 'hard' check (difficulty in ('easy', 'medium', 'hard')),
   created_at timestamptz not null default now()
 );
 
 -- ---------------------------------------------------------------------------
--- players: up to 2 per game. user_id ties a row to a specific browser's
--- anonymous auth session, which RLS uses below.
+-- players: any number per game (v3 party-size lobbies — no fixed 2-player
+-- cap; enforce_max_players below is just a generous technical safety valve,
+-- not the actual party-size business rule). user_id ties a row to a
+-- specific browser's anonymous auth session, which RLS uses below.
 -- ---------------------------------------------------------------------------
 create table if not exists players (
   id uuid primary key default gen_random_uuid(),
   game_code text not null references games(code) on delete cascade,
   user_id uuid not null default auth.uid(),
-  slot int not null check (slot in (0, 1)),
+  slot int not null check (slot >= 0),
   name text not null,
   genre text,
   artist text,
@@ -54,21 +61,25 @@ create table if not exists players (
 alter table games add constraint games_loser_player_id_fkey
   foreign key (loser_player_id) references players(id);
 
--- Prevents a 3rd player from ever claiming a slot, even under a race.
-create or replace function enforce_two_players()
+-- Generous technical ceiling so a room can never grow unbounded, even under
+-- a race — not the actual party-size limit (that's a UI/mode concern).
+create or replace function enforce_max_players()
 returns trigger as $$
+declare
+  v_max constant int := 16;
 begin
-  if (select count(*) from players where game_code = new.game_code) >= 2 then
-    raise exception 'Room % is already full', new.game_code;
+  if (select count(*) from players where game_code = new.game_code) >= v_max then
+    raise exception 'Room % is already full (max % players)', new.game_code, v_max;
   end if;
   return new;
 end;
 $$ language plpgsql security definer;
 
 drop trigger if exists trg_enforce_two_players on players;
-create trigger trg_enforce_two_players
+drop trigger if exists trg_enforce_max_players on players;
+create trigger trg_enforce_max_players
   before insert on players
-  for each row execute function enforce_two_players();
+  for each row execute function enforce_max_players();
 
 -- ---------------------------------------------------------------------------
 -- submissions: one row per player per round. Hidden from the opponent until
@@ -86,13 +97,20 @@ create table if not exists submissions (
   unique (game_code, round_index, player_id)
 );
 
+-- v3: "both in" now means "everyone in this room has submitted," not a
+-- hardcoded 2 — reveal once the submission count for this round catches up
+-- to the room's current player count.
 create or replace function reveal_submissions_when_both_in()
 returns trigger as $$
+declare
+  v_player_count int;
+  v_submission_count int;
 begin
-  if (
-    select count(*) from submissions
-    where game_code = new.game_code and round_index = new.round_index
-  ) >= 2 then
+  select count(*) into v_player_count from players where game_code = new.game_code;
+  select count(*) into v_submission_count from submissions
+    where game_code = new.game_code and round_index = new.round_index;
+
+  if v_submission_count >= v_player_count then
     update submissions set revealed = true
     where game_code = new.game_code and round_index = new.round_index;
   end if;
@@ -128,13 +146,18 @@ create index if not exists idx_players_game_code on players(game_code);
 create index if not exists idx_submissions_game_round on submissions(game_code, round_index);
 create index if not exists idx_votes_game_round on votes(game_code, round_index);
 
+-- v3: same "everyone in the room" generalization as submissions above.
 create or replace function reveal_votes_when_both_in()
 returns trigger as $$
+declare
+  v_player_count int;
+  v_vote_count int;
 begin
-  if (
-    select count(*) from votes
-    where game_code = new.game_code and round_index = new.round_index
-  ) >= 2 then
+  select count(*) into v_player_count from players where game_code = new.game_code;
+  select count(*) into v_vote_count from votes
+    where game_code = new.game_code and round_index = new.round_index;
+
+  if v_vote_count >= v_player_count then
     update votes set revealed = true
     where game_code = new.game_code and round_index = new.round_index;
   end if;
@@ -206,6 +229,46 @@ create policy "a signed-in client can join a room as itself" on players
 drop policy if exists "a player can update their own row" on players;
 create policy "a player can update their own row" on players
   for update using (auth.uid() = user_id);
+
+-- v3: a joiner can't SELECT existing players to compute their own next slot
+-- via a plain query — the SELECT policy above only allows seeing players in
+-- a game you're ALREADY in, chicken-and-egg for someone about to join. This
+-- RPC computes the next slot and inserts the row atomically, server-side
+-- (security definer, so it can see all players for the room), and
+-- re-checks the max-players ceiling and "already joined" case itself.
+create or replace function join_game(p_code text, p_name text)
+returns players
+language plpgsql
+security definer
+as $$
+declare
+  v_slot int;
+  v_max constant int := 16;
+  v_player players;
+begin
+  if not exists (select 1 from games where code = p_code) then
+    raise exception 'Room not found';
+  end if;
+
+  if exists (select 1 from players where game_code = p_code and user_id = auth.uid()) then
+    raise exception 'You already joined this room from another tab';
+  end if;
+
+  select coalesce(max(slot) + 1, 0) into v_slot from players where game_code = p_code;
+
+  if v_slot >= v_max then
+    raise exception 'Room % is already full (max % players)', p_code, v_max;
+  end if;
+
+  insert into players (game_code, slot, name, user_id)
+  values (p_code, v_slot, p_name, auth.uid())
+  returning * into v_player;
+
+  return v_player;
+end;
+$$;
+
+grant execute on function join_game(text, text) to authenticated;
 
 -- submissions: you can always read your own row. The opponent's row is only
 -- readable once `revealed` is true, which only the trigger above can set.
