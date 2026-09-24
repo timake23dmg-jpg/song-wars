@@ -120,6 +120,14 @@ create table if not exists votes (
   unique (game_code, round_index, voter_player_id)
 );
 
+-- Postgres only auto-indexes primary/unique keys, not plain foreign-key
+-- columns — every query here filters by game_code (and often round_index
+-- too), so these are worth having from the start rather than as a
+-- surprise-scan fix later.
+create index if not exists idx_players_game_code on players(game_code);
+create index if not exists idx_submissions_game_round on submissions(game_code, round_index);
+create index if not exists idx_votes_game_round on votes(game_code, round_index);
+
 create or replace function reveal_votes_when_both_in()
 returns trigger as $$
 begin
