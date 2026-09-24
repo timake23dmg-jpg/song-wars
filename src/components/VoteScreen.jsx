@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import Timer from './Timer'
+import SongBox from './SongBox'
 
 // One player's vote. Self-voting is allowed by default — see the "Self-voting"
 // open decision in the spec; with only 2 players, disallowing it removes any
@@ -28,19 +29,9 @@ export default function VoteScreen({ voter, submissions, onVote }) {
         <Timer seconds={15} running={!cast} onExpire={expire} />
       </div>
 
-      <div className="vote-options">
+      <div className="song-box-row">
         {submissions.map((s, idx) => (
-          <button
-            key={idx}
-            className="vote-card"
-            onClick={() => vote(idx)}
-            disabled={cast}
-          >
-            {s.track.artwork && <img src={s.track.artwork} alt="" />}
-            <strong>{s.track.title}</strong>
-            <span>{s.track.artist}</span>
-            <span className="hint">by {s.player}</span>
-          </button>
+          <SongBox key={idx} track={s.track} playerName={s.player} onClick={() => vote(idx)} disabled={cast} />
         ))}
       </div>
 

@@ -4,7 +4,7 @@ export default function WaitingRoom({ code, players, isHost, onStart, starting }
   return (
     <div className="screen">
       <p className="eyebrow">Room code</p>
-      <h1 style={{ letterSpacing: '0.25em', fontSize: '2.5rem', margin: 0 }}>{code}</h1>
+      <p className="room-code">{code}</p>
       <p className="hint">Share this code with your friend to join.</p>
 
       <div className="scoreboard">
