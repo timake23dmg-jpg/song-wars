@@ -186,21 +186,30 @@ export default function App() {
   // Follow the shared game status/offer state into (and out of) each phase.
   useEffect(() => {
     if (!game) return
-    if (game.status === 'finished' && phase !== 'end') {
-      setPhase('end')
+    if (game.status === 'finished') {
+      if (phase !== 'end') setPhase('end')
       return
     }
     if (game.status !== 'playing') return
 
-    if (game.bonus_offer_status === 'pending' && phase !== 'bonus-offer') {
-      setPhase('bonus-offer')
-      return
+    // Compute the target phase purely from `game`, independent of the
+    // current `phase` — comparing against `phase` mid-computation (as an
+    // earlier version of this effect did) causes it to flip-flop forever,
+    // since each branch's own "already there" check made a DIFFERENT later
+    // branch match once phase changed, and that branch's write re-triggered
+    // the first branch again. Only the final phase !== target check should
+    // ever reference the current phase.
+    let target
+    if (game.bonus_offer_status === 'pending') {
+      target = 'bonus-offer'
+    } else if (game.bonus_offer_status === 'accepted' && game.match_type === 'main') {
+      // Preserve the loser's own genre-pick vs artist-wheel sub-step instead
+      // of forcing it back to the first one on every re-render.
+      target = phase === 'bonus-genre-pick' || phase === 'bonus-artist-wheel' ? phase : 'bonus-genre-pick'
+    } else {
+      target = 'round-loop'
     }
-    if (game.bonus_offer_status === 'accepted' && game.match_type === 'main') {
-      if (phase !== 'bonus-genre-pick' && phase !== 'bonus-artist-wheel') setPhase('bonus-genre-pick')
-      return
-    }
-    if (phase !== 'round-loop') setPhase('round-loop')
+    if (phase !== target) setPhase(target)
   }, [game, phase])
 
   // Reset per-round local state whenever the shared round (or match) changes.
@@ -296,16 +305,24 @@ export default function App() {
       return
     }
 
-    setHistory((prev) => [
-      ...prev,
-      {
-        roundIndex: idx,
-        matchType: game.match_type,
-        prompt: game.prompts[idx],
-        winner: outcome.winner,
-        winningTrack: outcome.winningTrack,
-      },
-    ])
+    const matchType = game.match_type
+    setHistory((prev) => {
+      // Re-check against the actual latest state, not the closure's `history`
+      // — belt-and-braces against this effect's body running more than once
+      // for the same round before a re-render lets the outer guard see it
+      // (e.g. two realtime events landing in close succession).
+      if (prev.some((h) => h.roundIndex === idx && h.matchType === matchType)) return prev
+      return [
+        ...prev,
+        {
+          roundIndex: idx,
+          matchType,
+          prompt: game.prompts[idx],
+          winner: outcome.winner,
+          winningTrack: outcome.winningTrack,
+        },
+      ]
+    })
   }, [phase, game, players, roundSubmissions, roundVotes, timedOut, bothSubmitted, bothVoted])
 
   async function handleSubmitSong(track) {
