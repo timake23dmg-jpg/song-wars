@@ -229,13 +229,29 @@ export default function App() {
     return Math.max(0, Math.round(60 - elapsed))
   }, [game?.round_index, game?.round_started_at])
 
-  const mySubmissionRow = roundSubmissions.find((s) => s.player_id === myPlayer?.id) || null
-  const oppSubmissionRow = roundSubmissions.find((s) => s.player_id === opponent?.id) || null
+  // `roundSubmissions`/`roundVotes` are cleared via an async fetch when a new
+  // round starts, but `game.round_index` updates immediately via realtime —
+  // so there's a real window where the round number has already moved on
+  // but this state still holds the *previous* round's rows. Filtering by
+  // each row's own round_index (rather than trusting component state to
+  // have caught up yet) closes that window without depending on effect
+  // timing at all.
+  const currentRoundSubmissions = useMemo(
+    () => roundSubmissions.filter((s) => s.round_index === game?.round_index),
+    [roundSubmissions, game?.round_index]
+  )
+  const currentRoundVotes = useMemo(
+    () => roundVotes.filter((v) => v.round_index === game?.round_index),
+    [roundVotes, game?.round_index]
+  )
+
+  const mySubmissionRow = currentRoundSubmissions.find((s) => s.player_id === myPlayer?.id) || null
+  const oppSubmissionRow = currentRoundSubmissions.find((s) => s.player_id === opponent?.id) || null
   const iSubmitted = !!mySubmissionRow
   const bothSubmitted = iSubmitted && !!oppSubmissionRow
 
-  const myVoteRow = roundVotes.find((v) => v.voter_player_id === myPlayer?.id) || null
-  const oppVoteRow = roundVotes.find((v) => v.voter_player_id === opponent?.id) || null
+  const myVoteRow = currentRoundVotes.find((v) => v.voter_player_id === myPlayer?.id) || null
+  const oppVoteRow = currentRoundVotes.find((v) => v.voter_player_id === opponent?.id) || null
   const bothVoted = !!myVoteRow && !!oppVoteRow
 
   const order = useMemo(() => roundPlayOrder(code, game?.round_index ?? 0), [code, game?.round_index])
@@ -244,13 +260,13 @@ export default function App() {
     if (!bothSubmitted || players.length !== 2) return []
     const bySlot = [null, null]
     for (const p of players) {
-      const row = roundSubmissions.find((s) => s.player_id === p.id)
+      const row = currentRoundSubmissions.find((s) => s.player_id === p.id)
       if (row) bySlot[p.slot] = { player: p.name, playerId: p.id, track: row.track }
     }
     if (!bySlot[0] || !bySlot[1]) return []
     return order.map((i) => bySlot[i])
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bothSubmitted, players, roundSubmissions, order])
+  }, [bothSubmitted, players, currentRoundSubmissions, order])
 
   // Running win tally for whichever match (main or bonus) is currently in
   // progress — derived fresh from history each render rather than a
@@ -288,7 +304,7 @@ export default function App() {
 
       if (winnerSlot !== null) {
         const winPlayer = players.find((p) => p.slot === winnerSlot)
-        const winRow = roundSubmissions.find((s) => s.player_id === winPlayer.id)
+        const winRow = currentRoundSubmissions.find((s) => s.player_id === winPlayer.id)
         outcome = { winner: winPlayer.name, winningTrack: winRow.track }
       } else {
         outcome = { winner: null, winningTrack: null }
@@ -323,15 +339,16 @@ export default function App() {
         },
       ]
     })
-  }, [phase, game, players, roundSubmissions, roundVotes, timedOut, bothSubmitted, bothVoted])
+  }, [phase, game, players, currentRoundSubmissions, currentRoundVotes, timedOut, bothSubmitted, bothVoted])
 
   async function handleSubmitSong(track) {
     try {
-      await submitSong(code, game.round_index, myPlayer.id, track)
+      const roundIndex = game.round_index
+      await submitSong(code, roundIndex, myPlayer.id, track)
       setRoundSubmissions((prev) =>
-        prev.some((s) => s.player_id === myPlayer.id)
+        prev.some((s) => s.player_id === myPlayer.id && s.round_index === roundIndex)
           ? prev
-          : [...prev, { game_code: code, round_index: game.round_index, player_id: myPlayer.id, track, revealed: false }]
+          : [...prev, { game_code: code, round_index: roundIndex, player_id: myPlayer.id, track, revealed: false }]
       )
     } catch (err) {
       setError(err.message || 'Could not submit your song.')
@@ -346,11 +363,15 @@ export default function App() {
   async function handleVote(idx) {
     try {
       const votedForPlayerId = idx === null ? null : orderedSubmissions[idx].playerId
-      await castVote(code, game.round_index, myPlayer.id, votedForPlayerId)
+      const roundIndex = game.round_index
+      await castVote(code, roundIndex, myPlayer.id, votedForPlayerId)
       setRoundVotes((prev) =>
-        prev.some((v) => v.voter_player_id === myPlayer.id)
+        prev.some((v) => v.voter_player_id === myPlayer.id && v.round_index === roundIndex)
           ? prev
-          : [...prev, { voter_player_id: myPlayer.id, voted_for_player_id: votedForPlayerId, revealed: false }]
+          : [
+              ...prev,
+              { round_index: roundIndex, voter_player_id: myPlayer.id, voted_for_player_id: votedForPlayerId, revealed: false },
+            ]
       )
     } catch (err) {
       setError(err.message || 'Could not cast your vote.')
