@@ -420,3 +420,32 @@ body {
   font-size: 2rem;
   margin: 0;
 }
+
+/* Round announcement */
+.round-announce h1 {
+  margin: 0;
+  font-size: 2rem;
+  text-align: center;
+}
+
+/* Genre picker (Double or Nothing) */
+.genre-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  width: 100%;
+}
+.genre-tile {
+  min-height: 48px;
+  padding: 12px 10px;
+  border-radius: 12px;
+  border: 1px solid #3a3f66;
+  background: #0d0f1e;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.genre-tile:active {
+  border-color: var(--accent);
+}

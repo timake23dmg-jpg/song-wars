@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { GENRES } from './data/genres'
-import { drawPrompts } from './data/prompts'
+import { drawPrompts, PROMPTS } from './data/prompts'
 import { supabase } from './lib/supabase'
 import { subscribeToRoom, fetchPlayers, fetchGame } from './lib/room'
 import {
@@ -11,7 +11,13 @@ import {
   fetchRoundVotes,
   advanceRound,
   roundPlayOrder,
+  offerDoubleOrNothing,
+  acceptDoubleOrNothing,
+  declineDoubleOrNothing,
+  startBonusMatch,
+  endGame,
 } from './lib/game'
+import { checkMatchOutcome, roundLabel, matchRoundNumber } from './lib/match'
 import Wheel from './components/Wheel'
 import Lobby from './components/Lobby'
 import WaitingRoom from './components/WaitingRoom'
@@ -19,9 +25,10 @@ import SongSearch from './components/SongSearch'
 import RoundReveal from './components/RoundReveal'
 import VoteScreen from './components/VoteScreen'
 import RoundScore from './components/RoundScore'
+import RoundAnnounce from './components/RoundAnnounce'
+import DoubleOrNothingOffer from './components/DoubleOrNothingOffer'
+import GenrePicker from './components/GenrePicker'
 import EndScreen from './components/EndScreen'
-
-const TOTAL_ROUNDS = 10
 
 export default function App() {
   const [phase, setPhase] = useState('lobby')
@@ -37,7 +44,7 @@ export default function App() {
   const [roundVotes, setRoundVotes] = useState([])
   const [timedOut, setTimedOut] = useState(false)
   const [revealDone, setRevealDone] = useState(false)
-  const [scores, setScores] = useState({})
+  const [roundAnnounced, setRoundAnnounced] = useState(false)
   const [history, setHistory] = useState([])
 
   const gameRef = useRef(null)
@@ -122,7 +129,11 @@ export default function App() {
     setStarting(true)
     setError(null)
     try {
-      const prompts = drawPrompts(TOTAL_ROUNDS)
+      // Draw the whole pool, shuffled — Best of 5 can run into sudden death,
+      // and Double or Nothing continues from wherever the main match left
+      // off, so there's no fixed round count to size this to; drawing
+      // everything up front guarantees no repeats across either match.
+      const prompts = drawPrompts(PROMPTS.length)
       const { error: updateError } = await supabase
         .from('games')
         .update({ status: 'wheel', prompts, round_index: 0, round_started_at: null })
@@ -172,32 +183,36 @@ export default function App() {
     }
   }, [phase, iAmLocked, opponentLocked, game?.status, code])
 
-  // Follow the shared game status into (and out of) the round loop.
+  // Follow the shared game status/offer state into (and out of) each phase.
   useEffect(() => {
-    if (game?.status === 'playing' && phase !== 'round-loop') {
-      setPhase('round-loop')
-    }
-    if (game?.status === 'finished' && phase !== 'end') {
+    if (!game) return
+    if (game.status === 'finished' && phase !== 'end') {
       setPhase('end')
+      return
     }
-  }, [game?.status, phase])
+    if (game.status !== 'playing') return
 
-  // Reset per-round local state whenever the shared round changes.
+    if (game.bonus_offer_status === 'pending' && phase !== 'bonus-offer') {
+      setPhase('bonus-offer')
+      return
+    }
+    if (game.bonus_offer_status === 'accepted' && game.match_type === 'main') {
+      if (phase !== 'bonus-genre-pick' && phase !== 'bonus-artist-wheel') setPhase('bonus-genre-pick')
+      return
+    }
+    if (phase !== 'round-loop') setPhase('round-loop')
+  }, [game, phase])
+
+  // Reset per-round local state whenever the shared round (or match) changes.
   useEffect(() => {
     if (!game || game.status !== 'playing') return
     setTimedOut(false)
     setRevealDone(false)
+    setRoundAnnounced(false)
     fetchRoundSubmissions(code, game.round_index).then(setRoundSubmissions).catch(console.error)
     fetchRoundVotes(code, game.round_index).then(setRoundVotes).catch(console.error)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game?.round_index, game?.status])
-
-  // Seed the scoreboard once, when the round loop begins.
-  useEffect(() => {
-    if (phase === 'round-loop' && players.length === 2 && Object.keys(scores).length === 0) {
-      setScores({ [players[0].name]: 0, [players[1].name]: 0 })
-    }
-  }, [phase, players, scores])
 
   const initialSeconds = useMemo(() => {
     if (!game?.round_started_at) return 60
@@ -228,12 +243,26 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bothSubmitted, players, roundSubmissions, order])
 
+  // Running win tally for whichever match (main or bonus) is currently in
+  // progress — derived fresh from history each render rather than a
+  // separately-accumulated counter, so it can never drift out of sync.
+  const currentMatchScores = useMemo(() => {
+    if (players.length !== 2 || !game) return {}
+    const out = { [players[0].name]: 0, [players[1].name]: 0 }
+    history
+      .filter((h) => h.matchType === game.match_type)
+      .forEach((h) => {
+        if (h.winner) out[h.winner] = (out[h.winner] || 0) + 1
+      })
+    return out
+  }, [history, players, game?.match_type])
+
   // Record each round's outcome exactly once, whether it resolved by both
   // players voting or by the timer running out (forfeit/tie).
   useEffect(() => {
     if (phase !== 'round-loop' || !game || players.length !== 2) return
     const idx = game.round_index
-    if (history.some((h) => h.roundIndex === idx)) return
+    if (history.some((h) => h.roundIndex === idx && h.matchType === game.match_type)) return
 
     let outcome = null
     if (bothSubmitted && bothVoted) {
@@ -269,11 +298,14 @@ export default function App() {
 
     setHistory((prev) => [
       ...prev,
-      { roundIndex: idx, prompt: game.prompts[idx], winner: outcome.winner, winningTrack: outcome.winningTrack },
+      {
+        roundIndex: idx,
+        matchType: game.match_type,
+        prompt: game.prompts[idx],
+        winner: outcome.winner,
+        winningTrack: outcome.winningTrack,
+      },
     ])
-    if (outcome.winner) {
-      setScores((prev) => ({ ...prev, [outcome.winner]: (prev[outcome.winner] || 0) + 1 }))
-    }
   }, [phase, game, players, roundSubmissions, roundVotes, timedOut, bothSubmitted, bothVoted])
 
   async function handleSubmitSong(track) {
@@ -308,11 +340,77 @@ export default function App() {
     }
   }
 
+  // [R1] Checks whether the current match (main or bonus) is now decided; if
+  // so, routes to Double or Nothing (after main) or ends the game (after
+  // bonus) instead of just advancing to another round.
   async function handleContinueRound() {
     try {
-      await advanceRound(code, game.round_index, TOTAL_ROUNDS)
+      const matchHistory = history.filter((h) => h.matchType === game.match_type)
+      const winnerName = checkMatchOutcome(matchHistory, game.match_type, players)
+
+      if (!winnerName) {
+        await advanceRound(code, game.round_index)
+        return
+      }
+
+      if (game.match_type === 'main') {
+        const loser = players.find((p) => p.name !== winnerName)
+        await offerDoubleOrNothing(code, game.round_index, loser?.id ?? null)
+      } else {
+        const bonusWinner = players.find((p) => p.name === winnerName)
+        const loserWonBonus = bonusWinner?.id === game.loser_player_id
+        await endGame(code, { doubleWin: !loserWonBonus })
+      }
     } catch (err) {
-      setError(err.message || 'Could not advance to the next round.')
+      setError(err.message || 'Could not continue.')
+    }
+  }
+
+  const isLoser = !!game?.loser_player_id && myPlayer?.id === game.loser_player_id
+  const mainMatchScores = useMemo(() => {
+    if (players.length !== 2) return {}
+    const out = { [players[0].name]: 0, [players[1].name]: 0 }
+    history
+      .filter((h) => h.matchType === 'main')
+      .forEach((h) => {
+        if (h.winner) out[h.winner] = (out[h.winner] || 0) + 1
+      })
+    return out
+  }, [history, players])
+  const finalScoreText = `Final score: ${Object.entries(mainMatchScores)
+    .map(([name, pts]) => `${name} ${pts}`)
+    .join(' — ')}`
+
+  async function handleAcceptDoN() {
+    try {
+      await acceptDoubleOrNothing(code)
+    } catch (err) {
+      setError(err.message || 'Could not accept Double or Nothing.')
+    }
+  }
+  async function handleDeclineDoN() {
+    try {
+      await declineDoubleOrNothing(code)
+    } catch (err) {
+      setError(err.message || 'Could not end the game.')
+    }
+  }
+
+  function pickBonusGenre(genre) {
+    setMyGenre(genre)
+    setPhase('bonus-artist-wheel')
+  }
+
+  async function lockBonusArtist(artist) {
+    try {
+      const { error: updateError } = await supabase
+        .from('players')
+        .update({ genre: myGenre.name, artist })
+        .eq('id', myPlayer.id)
+      if (updateError) throw updateError
+      await startBonusMatch(code, game.round_index)
+    } catch (err) {
+      setError(err.message || 'Could not save your pick.')
     }
   }
 
@@ -320,7 +418,19 @@ export default function App() {
     window.location.reload()
   }
 
-  const currentRoundResult = history.find((h) => h.roundIndex === game?.round_index)
+  const currentRoundResult = history.find(
+    (h) => h.roundIndex === game?.round_index && h.matchType === game?.match_type
+  )
+
+  const bonusHistory = useMemo(() => history.filter((h) => h.matchType === 'bonus'), [history])
+  const finalOutcome = useMemo(() => {
+    if (!game || players.length !== 2) return { winnerName: null, doubleWin: false }
+    if (game.match_type === 'bonus') {
+      return { winnerName: checkMatchOutcome(bonusHistory, 'bonus', players), doubleWin: game.double_win }
+    }
+    const mainHistory = history.filter((h) => h.matchType === 'main')
+    return { winnerName: checkMatchOutcome(mainHistory, 'main', players), doubleWin: false }
+  }, [game, players, history, bonusHistory])
 
   return (
     <div className="app">
@@ -371,7 +481,15 @@ export default function App() {
         </div>
       )}
 
-      {phase === 'round-loop' && game && players.length === 2 && (
+      {phase === 'round-loop' && game && players.length === 2 && !roundAnnounced && (
+        <RoundAnnounce
+          label={roundLabel(game.match_type, matchRoundNumber(game))}
+          scores={currentMatchScores}
+          onDone={() => setRoundAnnounced(true)}
+        />
+      )}
+
+      {phase === 'round-loop' && game && players.length === 2 && roundAnnounced && (
         <>
           {!bothSubmitted && !timedOut && !iSubmitted && (
             <SongSearch
@@ -387,9 +505,7 @@ export default function App() {
 
           {!bothSubmitted && !timedOut && iSubmitted && (
             <div className="screen">
-              <p className="eyebrow">
-                Round {game.round_index + 1} of {TOTAL_ROUNDS}
-              </p>
+              <p className="eyebrow">{roundLabel(game.match_type, matchRoundNumber(game))}</p>
               <h2>You submitted {mySubmissionRow.track.title}</h2>
               <p className="hint">Waiting for {opponent?.name}…</p>
             </div>
@@ -420,9 +536,17 @@ export default function App() {
             (currentRoundResult ? (
               <RoundScore
                 result={currentRoundResult}
-                scores={scores}
-                roundNumber={game.round_index + 1}
-                totalRounds={TOTAL_ROUNDS}
+                scores={currentMatchScores}
+                roundLabel={roundLabel(game.match_type, matchRoundNumber(game))}
+                continueLabel={
+                  checkMatchOutcome(
+                    history.filter((h) => h.matchType === game.match_type),
+                    game.match_type,
+                    players
+                  )
+                    ? 'See results'
+                    : 'Next round'
+                }
                 onContinue={handleContinueRound}
               />
             ) : (
@@ -433,7 +557,50 @@ export default function App() {
         </>
       )}
 
-      {phase === 'end' && <EndScreen scores={scores} history={history} onRestart={restart} />}
+      {phase === 'bonus-offer' && (
+        <DoubleOrNothingOffer
+          isLoser={isLoser}
+          finalScoreText={finalScoreText}
+          onAccept={handleAcceptDoN}
+          onDecline={handleDeclineDoN}
+        />
+      )}
+
+      {phase === 'bonus-genre-pick' &&
+        (isLoser ? (
+          <GenrePicker genres={GENRES} onPick={pickBonusGenre} />
+        ) : (
+          <div className="screen">
+            <p className="hint">Waiting for {opponent?.name} to pick a new genre for Double or Nothing…</p>
+          </div>
+        ))}
+
+      {phase === 'bonus-artist-wheel' &&
+        (isLoser && myGenre ? (
+          <div className="screen">
+            <Wheel
+              options={myGenre.artists}
+              title="Spin for Artist"
+              subtitle={myGenre.name}
+              resultLabel="Your artist"
+              onResult={lockBonusArtist}
+            />
+          </div>
+        ) : (
+          <div className="screen">
+            <p className="hint">Waiting for {opponent?.name} to spin their new artist…</p>
+          </div>
+        ))}
+
+      {phase === 'end' && (
+        <EndScreen
+          winnerName={finalOutcome.winnerName}
+          doubleWin={finalOutcome.doubleWin}
+          scores={game?.match_type === 'bonus' ? currentMatchScores : mainMatchScores}
+          history={history}
+          onRestart={restart}
+        />
+      )}
     </div>
   )
 }

@@ -25,6 +25,13 @@ create table if not exists games (
   replay2_used boolean not null default false,
   replay_active_at timestamptz,
   replay_active_song int,
+  -- Phase 4/5: best of 5 + sudden death, Double or Nothing.
+  match_type text not null default 'main' check (match_type in ('main', 'bonus')),
+  match_start_round_index int not null default 0,
+  bonus_offer_status text check (bonus_offer_status in ('pending', 'accepted', 'declined')),
+  bonus_offer_started_at timestamptz,
+  loser_player_id uuid,
+  double_win boolean not null default false,
   created_at timestamptz not null default now()
 );
 
@@ -43,6 +50,9 @@ create table if not exists players (
   created_at timestamptz not null default now(),
   unique (game_code, slot)
 );
+
+alter table games add constraint games_loser_player_id_fkey
+  foreign key (loser_player_id) references players(id);
 
 -- Prevents a 3rd player from ever claiming a slot, even under a race.
 create or replace function enforce_two_players()

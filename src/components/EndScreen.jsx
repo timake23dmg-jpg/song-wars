@@ -1,13 +1,13 @@
-export default function EndScreen({ scores, history, onRestart }) {
+export default function EndScreen({ winnerName, doubleWin, scores, history, onRestart }) {
   const entries = Object.entries(scores)
-  const max = Math.max(...entries.map(([, p]) => p))
-  const winners = entries.filter(([, p]) => p === max).map(([name]) => name)
-  const isTie = winners.length > 1
 
   return (
     <div className="screen end-screen">
       <h1>Game over</h1>
-      <h2>{isTie ? `It's a tie: ${winners.join(' & ')}!` : `${winners[0]} wins! 🏆`}</h2>
+      <h2>
+        {winnerName ? `${winnerName} wins! 🏆` : "It's a tie!"}
+        {doubleWin && <span className="badge badge-warn" style={{ marginLeft: 8 }}>Double Win</span>}
+      </h2>
 
       <div className="scoreboard">
         {entries.map(([name, pts]) => (
@@ -22,7 +22,10 @@ export default function EndScreen({ scores, history, onRestart }) {
       <ol className="recap-list">
         {history.map((r, i) => (
           <li key={i}>
-            <span className="hint">{r.prompt}</span>
+            <span className="hint">
+              {r.matchType === 'bonus' ? 'Double or Nothing — ' : ''}
+              {r.prompt}
+            </span>
             {r.winningTrack ? (
               <div className="recap-row">
                 {r.winningTrack.artwork && <img src={r.winningTrack.artwork} alt="" />}
