@@ -9,21 +9,26 @@ const REPLAY_WINDOW_MS = 5_000 // [P3] shortened from the spec's 10s per live pl
 const TRANSITION_MS = 2_000
 
 // [P1]-[P4]: drives the whole "coin flip already decided -> 3s countdown ->
-// song 1 auto-plays -> 5s pause -> song 2 auto-plays -> one replay per song
-// -> vote transition" sequence, synced across both devices off one shared
-// `reveal_started_at` timestamp plus shared skip/replay signals on the
-// `games` row. See [X1]/[X2] in RESEARCH-PHASE1.md for why it's built this
-// way: a single persistent <audio> element (primed during the Submit tap so
-// iOS Safari allows later scripted playback) and shared timestamps that both
-// clients independently schedule local timers against, rather than trying to
-// drive playback from a server push.
+// each song auto-plays in sequence (a 5s 'Up next' pause between each pair)
+// -> one replay per song -> vote transition" sequence, synced across every
+// device off one shared `reveal_started_at` timestamp plus shared
+// skip/replay signals on the `games` row. Generalized in v3 to however many
+// songs are actually in play (orderedSubmissions.length), not a hardcoded
+// pair. See [X1]/[X2] in RESEARCH-PHASE1.md for why it's built this way: a
+// single persistent <audio> element (primed during the Submit tap so iOS
+// Safari allows later scripted playback) and shared timestamps that every
+// client independently schedules local timers against, rather than trying
+// to drive playback from a server push.
 export default function RoundReveal({ game, code, orderedSubmissions, audioRef, onDone }) {
   const [stage, setStage] = useState('loading')
   const [countdownLeft, setCountdownLeft] = useState(Math.ceil(COUNTDOWN_MS / 1000))
   const [replayLeft, setReplayLeft] = useState(Math.ceil(REPLAY_WINDOW_MS / 1000))
   const [nowPlayingIdx, setNowPlayingIdx] = useState(null)
+  const [nextUpIdx, setNextUpIdx] = useState(null)
 
   const roundIndex = game.round_index
+  const songCount = orderedSubmissions.length
+  const replayedSlots = game.replayed_slots || []
   // When the currently-playing clip started, so the skip effect can tell
   // whether a skip signal is for THIS clip or a stale one from before.
   const stageStartRef = useRef(0)
@@ -67,13 +72,14 @@ export default function RoundReveal({ game, code, orderedSubmissions, audioRef, 
   }
 
   // Kick off the shared clock as soon as this screen mounts (harmless no-op
-  // if the other device already set it for this round).
+  // if another device already set it for this round).
   useEffect(() => {
     startReveal(code, roundIndex).catch(console.error)
   }, [code, roundIndex])
 
-  // Countdown -> song 1 -> pause -> song 2 -> replay window.
+  // Countdown -> song 0 -> pause -> song 1 -> pause -> ... -> replay window.
   useEffect(() => {
+    if (songCount === 0) return
     const revealAt = game.reveal_started_at ? new Date(game.reveal_started_at).getTime() : null
     if (!revealAt) {
       setStage('loading')
@@ -90,29 +96,31 @@ export default function RoundReveal({ game, code, orderedSubmissions, audioRef, 
       return id
     }
 
+    function playSongAt(idx) {
+      setStage('playing')
+      playClip(orderedSubmissions[idx].track, idx, () => {
+        if (cancelled) return
+        if (idx < songCount - 1) {
+          setNextUpIdx(idx + 1)
+          setStage('pause')
+          schedule(PAUSE_MS, () => playSongAt(idx + 1))
+        } else {
+          setNowPlayingIdx(null)
+          setStage('replay')
+        }
+      })
+    }
+
     setStage('countdown')
-    const song1At = revealAt + COUNTDOWN_MS
+    const song0At = revealAt + COUNTDOWN_MS
     const countdownInterval = setInterval(() => {
       if (cancelled) return
-      const left = Math.max(0, Math.ceil((song1At - Date.now()) / 1000))
-      setCountdownLeft(left)
+      setCountdownLeft(Math.max(0, Math.ceil((song0At - Date.now()) / 1000)))
     }, 200)
 
-    schedule(song1At - Date.now(), () => {
+    schedule(song0At - Date.now(), () => {
       clearInterval(countdownInterval)
-      setStage('song1')
-      playClip(orderedSubmissions[0].track, 0, () => {
-        if (cancelled) return
-        setStage('pause')
-        schedule(PAUSE_MS, () => {
-          setStage('song2')
-          playClip(orderedSubmissions[1].track, 1, () => {
-            if (cancelled) return
-            setNowPlayingIdx(null)
-            setStage('replay')
-          })
-        })
-      })
+      playSongAt(0)
     })
 
     return () => {
@@ -122,10 +130,10 @@ export default function RoundReveal({ game, code, orderedSubmissions, audioRef, 
       clearPendingEnd()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game.reveal_started_at, roundIndex])
+  }, [game.reveal_started_at, roundIndex, songCount])
 
-  // React to a shared Skip tap while a clip is actively playing (song 1,
-  // song 2, or a replay — playClip is used for all three).
+  // React to a shared Skip tap while a clip is actively playing (any song,
+  // or a replay — playClip is used for all of them).
   useEffect(() => {
     if (!game.skip_requested_at || !pendingEndRef.current) return
     const skippedAt = new Date(game.skip_requested_at).getTime()
@@ -135,10 +143,10 @@ export default function RoundReveal({ game, code, orderedSubmissions, audioRef, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.skip_requested_at])
 
-  // Replay window: 5s to tap either unused box; resets after each replay.
+  // Replay window: 5s to tap any unused box; resets after each replay.
   useEffect(() => {
     if (stage !== 'replay') return
-    if (game.replay1_used && game.replay2_used) {
+    if (replayedSlots.length >= songCount) {
       setStage('transition')
       return
     }
@@ -159,9 +167,10 @@ export default function RoundReveal({ game, code, orderedSubmissions, audioRef, 
       clearInterval(interval)
       clearTimeout(timeout)
     }
-  }, [stage, game.replay1_used, game.replay2_used, game.replay_active_song])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, replayedSlots.length, songCount, game.replay_active_song])
 
-  // A replay was triggered (by either device) — play it here too.
+  // A replay was triggered (by any device) — play it here too.
   useEffect(() => {
     if (stage !== 'replay' || game.replay_active_song == null) return
     const idx = game.replay_active_song
@@ -186,12 +195,11 @@ export default function RoundReveal({ game, code, orderedSubmissions, audioRef, 
   }
 
   function tapReplay(idx) {
-    const used = idx === 0 ? game.replay1_used : game.replay2_used
-    if (used || game.replay_active_song != null) return
+    if (replayedSlots.includes(idx) || game.replay_active_song != null) return
     startReplay(code, roundIndex, idx).catch(console.error)
   }
 
-  if (stage === 'loading') {
+  if (songCount === 0 || stage === 'loading') {
     return (
       <div className="screen">
         <p className="hint">Starting playback…</p>
@@ -208,12 +216,12 @@ export default function RoundReveal({ game, code, orderedSubmissions, audioRef, 
     )
   }
 
-  if (stage === 'pause') {
+  if (stage === 'pause' && nextUpIdx != null) {
     return (
       <div className="screen">
         <p className="eyebrow">Up next</p>
         <div className="song-box-row song-box-row-single">
-          <SongBox track={orderedSubmissions[1].track} playerName={orderedSubmissions[1].player} />
+          <SongBox track={orderedSubmissions[nextUpIdx].track} playerName={orderedSubmissions[nextUpIdx].player} />
         </div>
       </div>
     )
@@ -227,14 +235,14 @@ export default function RoundReveal({ game, code, orderedSubmissions, audioRef, 
     )
   }
 
-  // song1 / song2 / replay
+  // playing / replay
   const replayWaiting = stage === 'replay' && game.replay_active_song == null
   return (
     <div className="screen reveal">
       {replayWaiting && <p className="eyebrow">Tap a song to replay it once · {replayLeft}s</p>}
-      <div className="song-box-row">
+      <div className="song-box-grid">
         {orderedSubmissions.map((s, idx) => {
-          const used = idx === 0 ? game.replay1_used : game.replay2_used
+          const used = replayedSlots.includes(idx)
           const isReplayable = replayWaiting && !used
           return (
             <SongBox

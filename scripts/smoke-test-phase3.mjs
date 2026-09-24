@@ -73,13 +73,18 @@ async function main() {
     .select()
   must('replay: racing second start is a no-op', (replayRace?.length || 0) === 0)
 
+  // v3: replay1_used/replay2_used became a replayed_slots array — see
+  // smoke-test-v3-round-loop.mjs for the array-accumulation behavior.
   const { data: finalGame, error: finishErr } = await p1
     .from('games')
-    .update({ replay1_used: true, replay_active_at: null, replay_active_song: null })
+    .update({ replayed_slots: [0], replay_active_at: null, replay_active_song: null })
     .eq('code', code)
     .select()
     .single()
-  must('replay: finishReplay clears active state', !finishErr && finalGame.replay1_used === true && finalGame.replay_active_song === null)
+  must(
+    'replay: finishReplay clears active state',
+    !finishErr && JSON.stringify(finalGame.replayed_slots) === '[0]' && finalGame.replay_active_song === null
+  )
 
   console.log(`\nDone. Test room code "${code}" left in the database.`)
 }

@@ -21,22 +21,29 @@ create table if not exists games (
   -- All reset to their defaults on every round change.
   reveal_started_at timestamptz,
   skip_requested_at timestamptz,
-  replay1_used boolean not null default false,
-  replay2_used boolean not null default false,
+  -- Which player slots have used their one replay this round — an array
+  -- rather than fixed replay1_used/replay2_used booleans, since a round can
+  -- have any number of songs once party-size lobbies are in play.
+  replayed_slots int[] not null default '{}',
   replay_active_at timestamptz,
   replay_active_song int,
-  -- Phase 4/5: best of 5 + sudden death, Double or Nothing.
+  -- Legacy Best of 5 / sudden death / Double or Nothing fields. Kept for
+  -- the code that implements them (still in the repo, just not on the
+  -- active path now that Points League is the one universal format — see
+  -- upgrade-v3/SONG-WARS-V3.md), not currently written by any live flow.
   match_type text not null default 'main' check (match_type in ('main', 'bonus')),
   match_start_round_index int not null default 0,
   bonus_offer_status text check (bonus_offer_status in ('pending', 'accepted', 'declined')),
   bonus_offer_started_at timestamptz,
   loser_player_id uuid,
   double_win boolean not null default false,
-  -- v3: party-size lobbies. mode/difficulty are host-picked in the lobby and
-  -- synced to every joiner; 'points_league' is the only implemented mode so
-  -- far (works for 2-8+ players), the rest of the v3 mode list lands later.
+  -- v3: party-size lobbies + Points League. mode/difficulty are host-picked
+  -- in the lobby and synced to every joiner; 'points_league' is the only
+  -- implemented mode so far. total_rounds is set once at game start (see
+  -- src/lib/pointsLeague.js) so every client agrees on when the match ends.
   mode text not null default 'points_league',
   difficulty text not null default 'hard' check (difficulty in ('easy', 'medium', 'hard')),
+  total_rounds int not null default 7,
   created_at timestamptz not null default now()
 );
 

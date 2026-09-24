@@ -48,20 +48,18 @@ export async function fetchRoundVotes(gameCode, roundIndex) {
 const RESET_PLAYBACK_FIELDS = {
   reveal_started_at: null,
   skip_requested_at: null,
-  replay1_used: false,
-  replay2_used: false,
+  replayed_slots: [],
   replay_active_at: null,
   replay_active_song: null,
 }
 
-// Advances to the next round within the current match (main or bonus) — it
-// never ends the game itself; the caller decides that by checking the Best
-// of 5 / sudden death outcome first (see checkMatchOutcome in App.jsx) and
-// calls offerDoubleOrNothing/endGame instead when a match is decided.
-// Guarded by .eq('round_index', ...) so if both clients race to advance the
-// same round, only the first write takes effect — the second just matches
-// zero rows and is a harmless no-op; both clients converge on the same
-// state via the realtime subscription.
+// Advances to the next round. Never ends the game itself — the caller
+// decides that (see checkPointsLeagueOutcome in src/lib/pointsLeague.js)
+// and calls endGame instead once the match's total_rounds is reached.
+// Guarded by .eq('round_index', ...) so if multiple clients race to
+// advance the same round, only the first write takes effect — the rest
+// just match zero rows and are harmless no-ops; every client converges on
+// the same state via the realtime subscription.
 export async function advanceRound(gameCode, fromRoundIndex) {
   const { error } = await supabase
     .from('games')
@@ -75,9 +73,9 @@ export async function advanceRound(gameCode, fromRoundIndex) {
   if (error) throw error
 }
 
-// [R1] Ends the game outright — either the main match was declined for
-// Double or Nothing, or a bonus match just concluded. doubleWin marks the
-// case where the original winner won again (the loser's gamble failed).
+// Ends the game outright. doubleWin only applies to the legacy Double or
+// Nothing flow (see below) — Points League always calls this with no
+// options once total_rounds is reached.
 export async function endGame(gameCode, { doubleWin = false } = {}) {
   const { error } = await supabase
     .from('games')
@@ -86,6 +84,11 @@ export async function endGame(gameCode, { doubleWin = false } = {}) {
     .neq('status', 'finished')
   if (error) throw error
 }
+
+// --- Legacy Best of 5 / Sudden Death / Double or Nothing flow ---
+// Not on the active path since v3 made Points League the one universal
+// format (see upgrade-v3/SONG-WARS-V3.md); kept rather than deleted in case
+// this comes back as its own selectable mode later.
 
 // [S2] The main match just ended without a clear "loser" needing to decide
 // yet — this marks the offer as pending so both devices show the right
@@ -185,24 +188,53 @@ export async function startReplay(gameCode, roundIndex, songIndex) {
 
 // [P3] Marks a song's one-time replay as consumed once it finishes playing
 // (naturally or via skip), locking that box for the rest of the round.
+// replayed_slots is an array rather than a fixed pair of booleans since a
+// round can have any number of songs (v3 party-size lobbies) — races on the
+// read-modify-write here are already ruled out upstream by startReplay's
+// "only one active replay at a time" guard, so a plain read-then-write is
+// safe.
 export async function finishReplay(gameCode, roundIndex, songIndex) {
-  const field = songIndex === 0 ? 'replay1_used' : 'replay2_used'
+  const { data: gameRow, error: fetchError } = await supabase
+    .from('games')
+    .select('replayed_slots')
+    .eq('code', gameCode)
+    .maybeSingle()
+  if (fetchError) throw fetchError
+
+  const updated = Array.from(new Set([...(gameRow?.replayed_slots || []), songIndex]))
   const { error } = await supabase
     .from('games')
-    .update({ [field]: true, replay_active_at: null, replay_active_song: null })
+    .update({ replayed_slots: updated, replay_active_at: null, replay_active_song: null })
     .eq('code', gameCode)
     .eq('round_index', roundIndex)
   if (error) throw error
 }
 
-// Deterministic "coin flip" for playback order — both devices compute the
-// same value from data they already share (room code + round number)
+// A seeded, deterministic shuffle (Park-Miller PRNG) so every device
+// computes the identical "coin flip" play order for however many songs are
+// in this round, from data they already share (room code + round number)
 // instead of needing an extra round trip to agree on it.
-export function roundPlayOrder(gameCode, roundIndex) {
+function seededRandom(seed) {
+  let s = seed % 2147483647
+  if (s <= 0) s += 2147483646
+  return function next() {
+    s = (s * 16807) % 2147483647
+    return (s - 1) / 2147483646
+  }
+}
+
+export function roundPlayOrder(gameCode, roundIndex, count) {
   const str = `${gameCode}:${roundIndex}`
   let hash = 0
   for (let i = 0; i < str.length; i++) {
     hash = (hash * 31 + str.charCodeAt(i)) | 0
   }
-  return (hash & 1) === 0 ? [0, 1] : [1, 0]
+  const rand = seededRandom(hash || 1)
+
+  const order = Array.from({ length: count }, (_, i) => i)
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1))
+    ;[order[i], order[j]] = [order[j], order[i]]
+  }
+  return order
 }
