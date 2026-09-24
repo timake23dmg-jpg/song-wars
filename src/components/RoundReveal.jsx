@@ -212,7 +212,9 @@ export default function RoundReveal({ game, code, orderedSubmissions, audioRef, 
     return (
       <div className="screen">
         <p className="eyebrow">Up next</p>
-        <SongBox track={orderedSubmissions[1].track} playerName={orderedSubmissions[1].player} />
+        <div className="song-box-row song-box-row-single">
+          <SongBox track={orderedSubmissions[1].track} playerName={orderedSubmissions[1].player} />
+        </div>
       </div>
     )
   }
