@@ -631,3 +631,60 @@ h1, h2, h3 {
   color: var(--accent);
   margin: 0;
 }
+.player-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.player-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--elevated);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-weight: 700;
+  text-align: left;
+}
+.lobby-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+.mode-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  background: var(--elevated);
+  color: var(--text);
+  font-family: var(--font-body);
+  text-align: left;
+  cursor: pointer;
+  min-height: 44px;
+}
+.mode-tile:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.mode-tile-selected {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+.mode-tile .hint {
+  font-size: 0.7rem;
+}

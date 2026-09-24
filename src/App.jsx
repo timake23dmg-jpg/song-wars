@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { GENRES } from './data/genres'
 import { drawPrompts, PROMPTS } from './data/prompts'
 import { supabase } from './lib/supabase'
+import { updateGameSettings } from './lib/room'
 import {
   advanceRound,
   offerDoubleOrNothing,
@@ -107,6 +108,22 @@ export default function App() {
       setError(err.message || 'Could not start the game.')
     } finally {
       setStarting(false)
+    }
+  }
+
+  async function handleSetMode(mode) {
+    try {
+      await updateGameSettings(code, { mode })
+    } catch (err) {
+      setError(err.message || 'Could not update the mode.')
+    }
+  }
+
+  async function handleSetDifficulty(difficulty) {
+    try {
+      await updateGameSettings(code, { difficulty })
+    } catch (err) {
+      setError(err.message || 'Could not update the difficulty.')
     }
   }
 
@@ -281,6 +298,9 @@ export default function App() {
           code={code}
           players={players}
           isHost={myPlayer?.slot === 0}
+          game={game}
+          onSetMode={handleSetMode}
+          onSetDifficulty={handleSetDifficulty}
           onStart={startGame}
           starting={starting}
         />
