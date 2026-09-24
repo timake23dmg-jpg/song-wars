@@ -8,7 +8,15 @@ import Timer from './Timer'
 // derived from a shared round_started_at) instead of always starting at 60 —
 // important once two devices are involved, since a player who reaches this
 // screen a few seconds late shouldn't get a fresh full 60s.
-export default function SongSearch({ player, lockedArtist, prompt, onSubmit, onForfeit, initialSeconds = 60 }) {
+export default function SongSearch({
+  player,
+  lockedArtist,
+  prompt,
+  onSubmit,
+  onForfeit,
+  initialSeconds = 60,
+  onBeforeSubmit,
+}) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
@@ -51,6 +59,10 @@ export default function SongSearch({ player, lockedArtist, prompt, onSubmit, onF
   function submit() {
     if (!selected || !selected.previewUrl || submitted) return
     if (!selected.matchesLockedArtist) return // server-side artist check, simulated here
+    // Must happen synchronously inside this click handler — this is the real
+    // user gesture that "unlocks" the shared reveal-screen audio element for
+    // later scripted playback on iOS Safari. See [X1] in RESEARCH-PHASE1.md.
+    onBeforeSubmit?.()
     setSubmitted(true)
     audioRef.current?.pause()
     onSubmit(selected)

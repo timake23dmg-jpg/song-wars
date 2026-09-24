@@ -20,9 +20,11 @@ export default function Wheel({ options, onResult, title, subtitle, resultLabel 
 
   const n = options.length
   const segAngle = 360 / n
-  // Wider slices (fewer options) get a wider label box, up to a safe cap so
-  // long names never reach the wheel's outer edge.
-  const labelBoxWidth = Math.max(60, Math.min(RADIUS - 12, (segAngle / 30) * 95))
+  // Wider slices (fewer options) get a wider, larger-font label; narrower
+  // slices (e.g. the 12-way genre wheel) get tighter, smaller labels so
+  // adjacent radiating labels don't crowd into each other near the rim.
+  const labelBoxWidth = Math.max(48, Math.min(RADIUS - 16, (segAngle / 30) * 70))
+  const labelFontRem = Math.max(0.56, Math.min(0.8, 0.56 + ((segAngle - 30) * (0.8 - 0.56)) / (72 - 30)))
 
   const gradient = options
     .map((_, i) => {
@@ -81,18 +83,22 @@ export default function Wheel({ options, onResult, title, subtitle, resultLabel 
           const angle = i * segAngle + segAngle / 2
           const text = typeof opt === 'string' ? opt : opt.name
           const flip = angle > 90 && angle < 270
+          const innerPadding = Math.max(10, Math.min(22, labelBoxWidth * 0.22))
           return (
             <div
               key={text}
               className="wheel-label"
               style={{ width: labelBoxWidth, transform: `rotate(${angle}deg)` }}
             >
-              <div className="wheel-label-inner" style={flip ? { transform: 'rotate(180deg)' } : undefined}>
+              <div
+                className="wheel-label-inner"
+                style={{ paddingLeft: innerPadding, ...(flip ? { transform: 'rotate(180deg)' } : null) }}
+              >
                 <FitText
                   text={text}
-                  maxWidth={labelBoxWidth - 24}
+                  maxWidth={labelBoxWidth - innerPadding - 6}
                   className="wheel-label-text"
-                  style={{ transformOrigin: 'left center' }}
+                  style={{ transformOrigin: 'left center', fontSize: `${labelFontRem}rem` }}
                 />
               </div>
             </div>

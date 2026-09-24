@@ -16,7 +16,7 @@ import Wheel from './components/Wheel'
 import Lobby from './components/Lobby'
 import WaitingRoom from './components/WaitingRoom'
 import SongSearch from './components/SongSearch'
-import RevealPlayback from './components/RevealPlayback'
+import RoundReveal from './components/RoundReveal'
 import VoteScreen from './components/VoteScreen'
 import RoundScore from './components/RoundScore'
 import EndScreen from './components/EndScreen'
@@ -44,6 +44,26 @@ export default function App() {
   useEffect(() => {
     gameRef.current = game
   }, [game])
+
+  // One persistent <audio> element, shared by every stage of the reveal
+  // sequence. iOS Safari only allows scripted .play() on an element that's
+  // already been played during a real user gesture — see [X1] in
+  // RESEARCH-PHASE1.md — so this gets "primed" during the Submit tap
+  // (submitSong below) rather than created fresh when the reveal starts.
+  const audioRef = useRef(null)
+  function primeAudio() {
+    const el = audioRef.current
+    if (!el) return
+    el.muted = true
+    el.play()
+      .then(() => {
+        el.pause()
+        el.muted = false
+      })
+      .catch(() => {
+        el.muted = false
+      })
+  }
 
   const opponent = players.find((p) => p.id !== myPlayer?.id) || null
   const myLatest = players.find((p) => p.id === myPlayer?.id) || myPlayer
@@ -310,6 +330,8 @@ export default function App() {
 
       {error && <p className="error">{error}</p>}
 
+      <audio ref={audioRef} style={{ display: 'none' }} />
+
       {phase === 'lobby' && <Lobby onJoined={handleJoined} />}
 
       {phase === 'waiting' && (
@@ -359,6 +381,7 @@ export default function App() {
               onSubmit={handleSubmitSong}
               onForfeit={handleSearchExpire}
               initialSeconds={initialSeconds}
+              onBeforeSubmit={primeAudio}
             />
           )}
 
@@ -373,7 +396,13 @@ export default function App() {
           )}
 
           {bothSubmitted && !myVoteRow && !revealDone && orderedSubmissions.length === 2 && (
-            <RevealPlayback submissions={orderedSubmissions} order={[0, 1]} onDone={() => setRevealDone(true)} />
+            <RoundReveal
+              game={game}
+              code={code}
+              orderedSubmissions={orderedSubmissions}
+              audioRef={audioRef}
+              onDone={() => setRevealDone(true)}
+            />
           )}
 
           {bothSubmitted && !myVoteRow && revealDone && orderedSubmissions.length === 2 && (

@@ -17,6 +17,14 @@ create table if not exists games (
   prompts jsonb not null default '[]'::jsonb,
   round_index int not null default 0,
   round_started_at timestamptz,
+  -- Phase 3 [P1]-[P4]: shared timestamps for synced auto-play/replay/skip.
+  -- All reset to their defaults on every round change.
+  reveal_started_at timestamptz,
+  skip_requested_at timestamptz,
+  replay1_used boolean not null default false,
+  replay2_used boolean not null default false,
+  replay_active_at timestamptz,
+  replay_active_song int,
   created_at timestamptz not null default now()
 );
 
