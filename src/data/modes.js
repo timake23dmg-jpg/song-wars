@@ -19,9 +19,9 @@ export const MODES = [
   {
     id: 'theme_night',
     name: 'Theme Night',
-    description: 'One theme locks the whole match’s prompts and artist pool.',
+    description: 'One theme locks the whole match’s genre/artist pool.',
     minPlayers: 2,
-    available: false,
+    available: true,
   },
   {
     id: 'blind_mode',
