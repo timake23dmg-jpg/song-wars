@@ -1,16 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { GENRES } from './data/genres'
 import { drawPrompts, PROMPTS } from './data/prompts'
 import { supabase } from './lib/supabase'
-import {
-  advanceRound,
-  offerDoubleOrNothing,
-  acceptDoubleOrNothing,
-  declineDoubleOrNothing,
-  startBonusMatch,
-  endGame,
-} from './lib/game'
-import { checkMatchOutcome, roundLabel, matchRoundNumber } from './lib/match'
+import { updateGameSettings } from './lib/room'
+import { advanceRound, endGame } from './lib/game'
+import { DEFAULT_ROUNDS, checkPointsLeagueOutcome } from './lib/pointsLeague'
 import { useAudioPriming } from './hooks/useAudioPriming'
 import { useRoomConnection } from './hooks/useRoomConnection'
 import { useRoundState } from './hooks/useRoundState'
@@ -22,8 +16,6 @@ import RoundReveal from './components/RoundReveal'
 import VoteScreen from './components/VoteScreen'
 import RoundScore from './components/RoundScore'
 import RoundAnnounce from './components/RoundAnnounce'
-import DoubleOrNothingOffer from './components/DoubleOrNothingOffer'
-import GenrePicker from './components/GenrePicker'
 import EndScreen from './components/EndScreen'
 
 export default function App() {
@@ -38,7 +30,6 @@ export default function App() {
   const { players, game, roundSubmissions, roundVotes, setRoundSubmissions, setRoundVotes } =
     useRoomConnection(code)
 
-  const opponent = players.find((p) => p.id !== myPlayer?.id) || null
   const myLatest = players.find((p) => p.id === myPlayer?.id) || myPlayer
 
   const {
@@ -49,12 +40,10 @@ export default function App() {
     setRoundAnnounced,
     history,
     initialSeconds,
+    roundStage,
     mySubmissionRow,
-    iSubmitted,
-    bothSubmitted,
-    myVoteRow,
-    oppVoteRow,
-    bothVoted,
+    submittedCount,
+    voteCount,
     orderedSubmissions,
     currentMatchScores,
     currentRoundResult,
@@ -67,8 +56,6 @@ export default function App() {
     game,
     players,
     myPlayer,
-    opponent,
-    myLatest,
     roundSubmissions,
     roundVotes,
     setRoundSubmissions,
@@ -93,20 +80,35 @@ export default function App() {
     setStarting(true)
     setError(null)
     try {
-      // Draw the whole pool, shuffled — Best of 5 can run into sudden death,
-      // and Double or Nothing continues from wherever the main match left
-      // off, so there's no fixed round count to size this to; drawing
-      // everything up front guarantees no repeats across either match.
+      // Draw the whole pool, shuffled — more than enough for a Points League
+      // match of DEFAULT_ROUNDS rounds, with headroom to raise the round
+      // count later without running out.
       const prompts = drawPrompts(PROMPTS.length)
       const { error: updateError } = await supabase
         .from('games')
-        .update({ status: 'wheel', prompts, round_index: 0, round_started_at: null })
+        .update({ status: 'wheel', prompts, round_index: 0, round_started_at: null, total_rounds: DEFAULT_ROUNDS })
         .eq('code', code)
       if (updateError) throw updateError
     } catch (err) {
       setError(err.message || 'Could not start the game.')
     } finally {
       setStarting(false)
+    }
+  }
+
+  async function handleSetMode(mode) {
+    try {
+      await updateGameSettings(code, { mode })
+    } catch (err) {
+      setError(err.message || 'Could not update the mode.')
+    }
+  }
+
+  async function handleSetDifficulty(difficulty) {
+    try {
+      await updateGameSettings(code, { difficulty })
+    } catch (err) {
+      setError(err.message || 'Could not update the difficulty.')
     }
   }
 
@@ -128,14 +130,15 @@ export default function App() {
     }
   }
 
-  const opponentLocked = !!opponent?.artist
   const iAmLocked = !!myLatest?.artist
+  const lockedCount = players.filter((p) => !!p.artist).length
+  const allLocked = players.length > 0 && lockedCount === players.length
 
-  // Once both players are locked in, flip the room from "wheel" to "playing"
-  // and start round 0's clock. Guarded by .eq('status','wheel') so if both
+  // Once everyone is locked in, flip the room from "wheel" to "playing" and
+  // start round 0's clock. Guarded by .eq('status','wheel') so if multiple
   // clients race to do this, only the first write takes effect.
   useEffect(() => {
-    if (phase === 'wheel-waiting' && iAmLocked && opponentLocked && game?.status === 'wheel') {
+    if (phase === 'wheel-waiting' && iAmLocked && allLocked && game?.status === 'wheel') {
       supabase
         .from('games')
         .update({ status: 'playing', round_started_at: new Date().toISOString() })
@@ -145,9 +148,9 @@ export default function App() {
           if (updateError) console.error(updateError)
         })
     }
-  }, [phase, iAmLocked, opponentLocked, game?.status, code])
+  }, [phase, iAmLocked, allLocked, game?.status, code])
 
-  // Follow the shared game status/offer state into (and out of) each phase.
+  // Follow the shared game status into (and out of) the round loop.
   useEffect(() => {
     if (!game) return
     if (game.status === 'finished') {
@@ -155,98 +158,22 @@ export default function App() {
       return
     }
     if (game.status !== 'playing') return
-
-    // Compute the target phase purely from `game`, independent of the
-    // current `phase` — comparing against `phase` mid-computation (as an
-    // earlier version of this effect did) causes it to flip-flop forever,
-    // since each branch's own "already there" check made a DIFFERENT later
-    // branch match once phase changed, and that branch's write re-triggered
-    // the first branch again. Only the final phase !== target check should
-    // ever reference the current phase.
-    let target
-    if (game.bonus_offer_status === 'pending') {
-      target = 'bonus-offer'
-    } else if (game.bonus_offer_status === 'accepted' && game.match_type === 'main') {
-      // Preserve the loser's own genre-pick vs artist-wheel sub-step instead
-      // of forcing it back to the first one on every re-render.
-      target = phase === 'bonus-genre-pick' || phase === 'bonus-artist-wheel' ? phase : 'bonus-genre-pick'
-    } else {
-      target = 'round-loop'
-    }
-    if (phase !== target) setPhase(target)
+    if (phase !== 'round-loop') setPhase('round-loop')
   }, [game, phase])
 
-  // [R1] Checks whether the current match (main or bonus) is now decided; if
-  // so, routes to Double or Nothing (after main) or ends the game (after
-  // bonus) instead of just advancing to another round.
+  // Checks whether the Points League match is decided (every round of
+  // total_rounds played); if so, ends the game, otherwise advances to the
+  // next round.
   async function handleContinueRound() {
     try {
-      const matchHistory = history.filter((h) => h.matchType === game.match_type)
-      const winnerName = checkMatchOutcome(matchHistory, game.match_type, players)
-
-      if (!winnerName) {
+      const outcome = checkPointsLeagueOutcome(history, game.total_rounds, players)
+      if (!outcome) {
         await advanceRound(code, game.round_index)
-        return
-      }
-
-      if (game.match_type === 'main') {
-        const loser = players.find((p) => p.name !== winnerName)
-        await offerDoubleOrNothing(code, game.round_index, loser?.id ?? null)
       } else {
-        const bonusWinner = players.find((p) => p.name === winnerName)
-        const loserWonBonus = bonusWinner?.id === game.loser_player_id
-        await endGame(code, { doubleWin: !loserWonBonus })
+        await endGame(code)
       }
     } catch (err) {
       setError(err.message || 'Could not continue.')
-    }
-  }
-
-  const isLoser = !!game?.loser_player_id && myPlayer?.id === game.loser_player_id
-  const mainMatchScores = useMemo(() => {
-    if (players.length !== 2) return {}
-    const out = { [players[0].name]: 0, [players[1].name]: 0 }
-    history
-      .filter((h) => h.matchType === 'main')
-      .forEach((h) => {
-        if (h.winner) out[h.winner] = (out[h.winner] || 0) + 1
-      })
-    return out
-  }, [history, players])
-  const finalScoreText = `Final score: ${Object.entries(mainMatchScores)
-    .map(([name, pts]) => `${name} ${pts}`)
-    .join(' — ')}`
-
-  async function handleAcceptDoN() {
-    try {
-      await acceptDoubleOrNothing(code)
-    } catch (err) {
-      setError(err.message || 'Could not accept Double or Nothing.')
-    }
-  }
-  async function handleDeclineDoN() {
-    try {
-      await declineDoubleOrNothing(code)
-    } catch (err) {
-      setError(err.message || 'Could not end the game.')
-    }
-  }
-
-  function pickBonusGenre(genre) {
-    setMyGenre(genre)
-    setPhase('bonus-artist-wheel')
-  }
-
-  async function lockBonusArtist(artist) {
-    try {
-      const { error: updateError } = await supabase
-        .from('players')
-        .update({ genre: myGenre.name, artist })
-        .eq('id', myPlayer.id)
-      if (updateError) throw updateError
-      await startBonusMatch(code, game.round_index)
-    } catch (err) {
-      setError(err.message || 'Could not save your pick.')
     }
   }
 
@@ -254,15 +181,12 @@ export default function App() {
     window.location.reload()
   }
 
-  const bonusHistory = useMemo(() => history.filter((h) => h.matchType === 'bonus'), [history])
-  const finalOutcome = useMemo(() => {
-    if (!game || players.length !== 2) return { winnerName: null, doubleWin: false }
-    if (game.match_type === 'bonus') {
-      return { winnerName: checkMatchOutcome(bonusHistory, 'bonus', players), doubleWin: game.double_win }
-    }
-    const mainHistory = history.filter((h) => h.matchType === 'main')
-    return { winnerName: checkMatchOutcome(mainHistory, 'main', players), doubleWin: false }
-  }, [game, players, history, bonusHistory])
+  const finalOutcome = checkPointsLeagueOutcome(history, game?.total_rounds ?? DEFAULT_ROUNDS, players) || {
+    winners: [],
+  }
+
+  const notSubmittedCount = Math.max(0, players.length - submittedCount)
+  const notVotedCount = Math.max(0, players.length - voteCount)
 
   return (
     <div className="app">
@@ -281,6 +205,9 @@ export default function App() {
           code={code}
           players={players}
           isHost={myPlayer?.slot === 0}
+          game={game}
+          onSetMode={handleSetMode}
+          onSetDifficulty={handleSetDifficulty}
           onStart={startGame}
           starting={starting}
         />
@@ -308,22 +235,24 @@ export default function App() {
         <div className="screen">
           <h2>You're locked to {myLatest?.artist}</h2>
           <p className="hint">
-            {opponentLocked ? `${opponent.name} is locked in too.` : `Waiting for ${opponent?.name || 'your opponent'} to spin…`}
+            {allLocked
+              ? 'Everyone is locked in!'
+              : `Waiting for ${players.length - lockedCount} more player${players.length - lockedCount === 1 ? '' : 's'} to spin…`}
           </p>
         </div>
       )}
 
-      {phase === 'round-loop' && game && players.length === 2 && !roundAnnounced && (
+      {phase === 'round-loop' && game && players.length >= 2 && !roundAnnounced && (
         <RoundAnnounce
-          label={roundLabel(game.match_type, matchRoundNumber(game))}
+          label={`Round ${game.round_index + 1} of ${game.total_rounds}`}
           scores={currentMatchScores}
           onDone={() => setRoundAnnounced(true)}
         />
       )}
 
-      {phase === 'round-loop' && game && players.length === 2 && roundAnnounced && (
+      {phase === 'round-loop' && game && players.length >= 2 && roundAnnounced && (
         <>
-          {!bothSubmitted && !timedOut && !iSubmitted && (
+          {roundStage === 'submitting' && (
             <SongSearch
               player={myLatest.name}
               lockedArtist={myLatest.artist}
@@ -335,15 +264,19 @@ export default function App() {
             />
           )}
 
-          {!bothSubmitted && !timedOut && iSubmitted && (
+          {roundStage === 'waiting-submissions' && (
             <div className="screen">
-              <p className="eyebrow">{roundLabel(game.match_type, matchRoundNumber(game))}</p>
+              <p className="eyebrow">
+                Round {game.round_index + 1} of {game.total_rounds}
+              </p>
               <h2>You submitted {mySubmissionRow.track.title}</h2>
-              <p className="hint">Waiting for {opponent?.name}…</p>
+              <p className="hint">
+                Waiting for {notSubmittedCount} more player{notSubmittedCount === 1 ? '' : 's'}…
+              </p>
             </div>
           )}
 
-          {bothSubmitted && !myVoteRow && !revealDone && orderedSubmissions.length === 2 && (
+          {roundStage === 'revealing' && orderedSubmissions.length > 0 && (
             <RoundReveal
               game={game}
               code={code}
@@ -353,85 +286,39 @@ export default function App() {
             />
           )}
 
-          {bothSubmitted && !myVoteRow && revealDone && orderedSubmissions.length === 2 && (
+          {roundStage === 'voting' && orderedSubmissions.length > 0 && (
             <VoteScreen voter={myLatest.name} submissions={orderedSubmissions} onVote={handleVote} />
           )}
 
-          {bothSubmitted && myVoteRow && !oppVoteRow && (
+          {roundStage === 'waiting-votes' && (
             <div className="screen">
               <p className="hint">Vote locked in ✓</p>
-              <p className="hint">Waiting for {opponent?.name} to vote…</p>
+              <p className="hint">
+                Waiting for {notVotedCount} more player{notVotedCount === 1 ? '' : 's'} to vote…
+              </p>
             </div>
           )}
 
-          {((bothSubmitted && bothVoted) || (timedOut && !bothSubmitted)) &&
-            (currentRoundResult ? (
-              <RoundScore
-                result={currentRoundResult}
-                scores={currentMatchScores}
-                roundLabel={roundLabel(game.match_type, matchRoundNumber(game))}
-                continueLabel={
-                  checkMatchOutcome(
-                    history.filter((h) => h.matchType === game.match_type),
-                    game.match_type,
-                    players
-                  )
-                    ? 'See results'
-                    : 'Next round'
-                }
-                onContinue={handleContinueRound}
-              />
-            ) : (
-              <div className="screen">
-                <p className="hint">Tallying the round…</p>
-              </div>
-            ))}
+          {roundStage === 'scoring' && (
+            <div className="screen">
+              <p className="hint">Tallying the round…</p>
+            </div>
+          )}
+
+          {roundStage === 'done' && currentRoundResult && (
+            <RoundScore
+              result={currentRoundResult}
+              scores={currentMatchScores}
+              roundLabel={`Round ${game.round_index + 1} of ${game.total_rounds}`}
+              continueLabel={checkPointsLeagueOutcome(history, game.total_rounds, players) ? 'See results' : 'Next round'}
+              onContinue={handleContinueRound}
+            />
+          )}
         </>
       )}
 
-      {phase === 'bonus-offer' && (
-        <DoubleOrNothingOffer
-          isLoser={isLoser}
-          finalScoreText={finalScoreText}
-          onAccept={handleAcceptDoN}
-          onDecline={handleDeclineDoN}
-        />
-      )}
-
-      {phase === 'bonus-genre-pick' &&
-        (isLoser ? (
-          <GenrePicker genres={GENRES} onPick={pickBonusGenre} />
-        ) : (
-          <div className="screen">
-            <p className="hint">Waiting for {opponent?.name} to pick a new genre for Double or Nothing…</p>
-          </div>
-        ))}
-
-      {phase === 'bonus-artist-wheel' &&
-        (isLoser && myGenre ? (
-          <div className="screen">
-            <Wheel
-              options={myGenre.artists}
-              title="Spin for Artist"
-              subtitle={myGenre.name}
-              resultLabel="Your artist"
-              onResult={lockBonusArtist}
-            />
-          </div>
-        ) : (
-          <div className="screen">
-            <p className="hint">Waiting for {opponent?.name} to spin their new artist…</p>
-          </div>
-        ))}
-
       {phase === 'end' && (
-        <EndScreen
-          winnerName={finalOutcome.winnerName}
-          doubleWin={finalOutcome.doubleWin}
-          scores={game?.match_type === 'bonus' ? currentMatchScores : mainMatchScores}
-          history={history}
-          onRestart={restart}
-        />
+        <EndScreen winners={finalOutcome.winners} scores={currentMatchScores} history={history} onRestart={restart} />
       )}
     </div>
   )

@@ -1,27 +1,22 @@
-export default function EndScreen({ winnerName, doubleWin, scores, history, onRestart }) {
-  const entries = Object.entries(scores)
+// v3: winners is an array (Points League can end in a tie at the top with
+// any number of players sharing the win, not just a binary "tie or not").
+export default function EndScreen({ winners, scores, history, onRestart }) {
+  const entries = Object.entries(scores).sort(([, a], [, b]) => b - a)
+  const isTie = winners.length > 1
 
   return (
     <div className="screen end-screen">
       <div className="end-card end-winner-card">
         <p className="eyebrow">Game over</p>
         <h1 className="end-winner-name">
-          {winnerName ? (
-            <>
-              🏆 {winnerName} wins!
-            </>
-          ) : (
-            "It's a tie!"
-          )}
+          {winners.length === 0 ? "It's a tie!" : isTie ? `${winners.join(' & ')} tie for the win!` : `🏆 ${winners[0]} wins!`}
         </h1>
-        {doubleWin && <span className="badge badge-warn end-doublewin-badge">Double Win</span>}
 
         <div className="end-score-row">
-          {entries.map(([name, pts], i) => (
-            <div key={name} className="end-score-card">
+          {entries.map(([name, pts]) => (
+            <div key={name} className={`end-score-card ${winners.includes(name) ? 'end-score-card-winner' : ''}`}>
               <span className="end-score-name">{name}</span>
               <strong className="end-score-value">{pts}</strong>
-              {i === 0 && entries.length > 1 && <span className="end-score-vs">vs</span>}
             </div>
           ))}
         </div>
@@ -40,10 +35,7 @@ export default function EndScreen({ winnerName, doubleWin, scores, history, onRe
                 )}
               </div>
               <div className="recap-cell-info">
-                <span className="recap-prompt">
-                  {r.matchType === 'bonus' ? 'DoN · ' : ''}
-                  {r.prompt}
-                </span>
+                <span className="recap-prompt">{r.prompt}</span>
                 {r.winningTrack ? (
                   <>
                     <strong className="recap-song-title">{r.winningTrack.title}</strong>

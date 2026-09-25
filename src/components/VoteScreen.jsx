@@ -2,11 +2,9 @@ import { useState } from 'react'
 import Timer from './Timer'
 import SongBox from './SongBox'
 
-// One player's vote. Self-voting is allowed by default — see the "Self-voting"
-// open decision in the spec; with only 2 players, disallowing it removes any
-// signal from the vote (each player would always vote for the other by default,
-// resolving to a permanent tie), so this build defaults to allowed. Flag if you'd
-// rather forbid it.
+// One player's vote, for however many candidates are in this round (v3:
+// any number of players, not just 2). Self-voting is allowed by default —
+// see the "Self-voting" open decision in the original spec.
 export default function VoteScreen({ voter, submissions, onVote }) {
   const [cast, setCast] = useState(false)
 
@@ -29,7 +27,7 @@ export default function VoteScreen({ voter, submissions, onVote }) {
         <Timer seconds={15} running={!cast} onExpire={expire} />
       </div>
 
-      <div className="song-box-row">
+      <div className="song-box-grid">
         {submissions.map((s, idx) => (
           <SongBox key={idx} track={s.track} playerName={s.player} onClick={() => vote(idx)} disabled={cast} />
         ))}
