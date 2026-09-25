@@ -44,6 +44,10 @@ create table if not exists games (
   mode text not null default 'points_league',
   difficulty text not null default 'hard' check (difficulty in ('easy', 'medium', 'hard')),
   total_rounds int not null default 7,
+  -- Elimination mode: empty = a normal round (every active player
+  -- competes); non-empty = a tiebreak mini-round scoped to just these
+  -- player ids (a tie for fewest votes in the previous round).
+  tiebreak_player_ids uuid[] not null default '{}',
   created_at timestamptz not null default now()
 );
 
@@ -61,6 +65,7 @@ create table if not exists players (
   name text not null,
   genre text,
   artist text,
+  eliminated_at timestamptz, -- Elimination mode only; null elsewhere
   created_at timestamptz not null default now(),
   unique (game_code, slot)
 );
@@ -276,6 +281,28 @@ end;
 $$;
 
 grant execute on function join_game(text, text) to authenticated;
+
+-- Elimination mode: marks a player eliminated. Idempotent (eliminating an
+-- already-eliminated player is a no-op), so no first-write-wins guard is
+-- needed the way other guarded writes in this schema use one.
+create or replace function eliminate_player(p_game_code text, p_player_id uuid)
+returns void
+language plpgsql
+security definer
+as $$
+begin
+  if not exists (
+    select 1 from players where game_code = p_game_code and user_id = auth.uid()
+  ) then
+    raise exception 'not a member of this game';
+  end if;
+
+  update players set eliminated_at = now()
+  where id = p_player_id and game_code = p_game_code and eliminated_at is null;
+end;
+$$;
+
+grant execute on function eliminate_player(text, uuid) to authenticated;
 
 -- submissions: you can always read your own row. The opponent's row is only
 -- readable once `revealed` is true, which only the trigger above can set.

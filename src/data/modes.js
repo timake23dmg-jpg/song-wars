@@ -14,7 +14,7 @@ export const MODES = [
     name: 'Elimination',
     description: 'Lowest-voted player is cut each round, down to a winner.',
     minPlayers: 3,
-    available: false,
+    available: true,
   },
   {
     id: 'theme_night',
