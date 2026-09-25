@@ -307,6 +307,86 @@ $$;
 
 grant execute on function eliminate_player(text, uuid) to authenticated;
 
+-- Server-authoritative round/reveal timestamps (now(), not the calling
+-- client's own clock) — see supabase/migrations/012_server_time_and_lightning_expiry.sql
+-- for why: a device's clock skew was previously baked directly into a
+-- timestamp every client schedules its own countdown against, invisible at
+-- 60s timers but visible at Lightning Round's short ones.
+create or replace function start_match(p_game_code text)
+returns void
+language plpgsql
+security definer
+as $$
+begin
+  if not exists (
+    select 1 from players where game_code = p_game_code and user_id = auth.uid()
+  ) then
+    raise exception 'not a member of this game';
+  end if;
+
+  update games
+  set status = 'playing', round_started_at = now()
+  where code = p_game_code and status = 'wheel';
+end;
+$$;
+
+grant execute on function start_match(text) to authenticated;
+
+-- Advances to the next round. Never ends the game itself — the caller
+-- decides that and calls endGame instead once the match is decided. Guarded
+-- by round_index so racing callers converge harmlessly (see advanceRound in
+-- src/lib/game.js). p_tiebreak_player_ids is always passed explicitly
+-- (defaulting to '{}') rather than conditionally included, since
+-- Points League games never read that column anyway.
+create or replace function advance_round(p_game_code text, p_from_round_index int, p_tiebreak_player_ids uuid[] default '{}')
+returns void
+language plpgsql
+security definer
+as $$
+begin
+  if not exists (
+    select 1 from players where game_code = p_game_code and user_id = auth.uid()
+  ) then
+    raise exception 'not a member of this game';
+  end if;
+
+  update games
+  set round_index = p_from_round_index + 1,
+      round_started_at = now(),
+      reveal_started_at = null,
+      skip_requested_at = null,
+      replayed_slots = '{}',
+      replay_active_at = null,
+      replay_active_song = null,
+      tiebreak_player_ids = p_tiebreak_player_ids
+  where code = p_game_code and round_index = p_from_round_index;
+end;
+$$;
+
+grant execute on function advance_round(text, int, uuid[]) to authenticated;
+
+-- Marks the moment both submissions are in and the reveal sequence begins.
+-- Guarded so only the first client to notice sets it.
+create or replace function start_reveal(p_game_code text, p_round_index int)
+returns void
+language plpgsql
+security definer
+as $$
+begin
+  if not exists (
+    select 1 from players where game_code = p_game_code and user_id = auth.uid()
+  ) then
+    raise exception 'not a member of this game';
+  end if;
+
+  update games
+  set reveal_started_at = now()
+  where code = p_game_code and round_index = p_round_index and reveal_started_at is null;
+end;
+$$;
+
+grant execute on function start_reveal(text, int) to authenticated;
+
 -- submissions: you can always read your own row. The opponent's row is only
 -- readable once `revealed` is true, which only the trigger above can set.
 drop policy if exists "read own submission always, opponent's once revealed" on submissions;
@@ -331,9 +411,12 @@ create policy "a player can cast their own vote" on votes
   for insert with check (votes.voter_player_id in (select my_player_ids()));
 
 -- ---------------------------------------------------------------------------
--- Lets a client reveal a round's submissions once the 60s pick timer has
+-- Lets a client reveal a round's submissions once the pick timer has
 -- genuinely expired, even if only one (or zero) players submitted — see
--- supabase/reveal_expired_round.sql for the full rationale.
+-- supabase/reveal_expired_round.sql for the full rationale. Mode-aware
+-- window (60s normally, 25s for Lightning Round) matching
+-- src/hooks/useRoundState.js's DEFAULT_SUBMIT_SECONDS/LIGHTNING_SUBMIT_SECONDS
+-- split — see supabase/migrations/012_server_time_and_lightning_expiry.sql.
 -- ---------------------------------------------------------------------------
 create or replace function reveal_expired_round(p_game_code text, p_round_index int)
 returns void
@@ -342,21 +425,22 @@ security definer
 as $$
 declare
   v_started timestamptz;
-  v_is_member boolean;
+  v_mode text;
+  v_window interval;
 begin
-  select round_started_at into v_started from games where code = p_game_code;
+  select round_started_at, mode into v_started, v_mode from games where code = p_game_code;
   if v_started is null then
     return;
   end if;
 
-  select exists(
+  if not exists (
     select 1 from players where game_code = p_game_code and user_id = auth.uid()
-  ) into v_is_member;
-  if not v_is_member then
+  ) then
     raise exception 'not a member of this game';
   end if;
 
-  if now() < v_started + interval '60 seconds' then
+  v_window := case when v_mode = 'lightning_round' then interval '25 seconds' else interval '60 seconds' end;
+  if now() < v_started + v_window then
     return;
   end if;
 

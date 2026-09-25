@@ -1,5 +1,16 @@
 import { supabase } from './supabase'
 
+// Flips the room from "wheel" to "playing" and starts round 0's clock, once
+// everyone's locked in an artist. Runs as the start_match RPC so
+// round_started_at comes from the database's own clock, not the calling
+// client's — see migrations/012_server_time_and_lightning_expiry.sql.
+// Guarded server-side by status = 'wheel' so racing callers converge
+// harmlessly.
+export async function startMatch(gameCode) {
+  const { error } = await supabase.rpc('start_match', { p_game_code: gameCode })
+  if (error) throw error
+}
+
 export async function submitSong(gameCode, roundIndex, playerId, track) {
   const { error } = await supabase
     .from('submissions')
@@ -45,6 +56,8 @@ export async function fetchRoundVotes(gameCode, roundIndex) {
   return data
 }
 
+// Only used by the legacy startBonusMatch flow below now — advanceRound
+// resets these same fields server-side inside the advance_round RPC.
 const RESET_PLAYBACK_FIELDS = {
   reveal_started_at: null,
   skip_requested_at: null,
@@ -55,24 +68,21 @@ const RESET_PLAYBACK_FIELDS = {
 
 // Advances to the next round. Never ends the game itself — the caller
 // decides that (see checkPointsLeagueOutcome / checkEliminationOutcome) and
-// calls endGame instead once the match is decided. Guarded by
-// .eq('round_index', ...) so if multiple clients race to advance the same
-// round, only the first write takes effect — the rest just match zero rows
-// and are harmless no-ops; every client converges on the same state via the
-// realtime subscription. extraPatch lets a mode layer on its own fields
-// (e.g. Elimination sets/clears tiebreak_player_ids) without duplicating
-// this guarded-write pattern.
-export async function advanceRound(gameCode, fromRoundIndex, extraPatch = {}) {
-  const { error } = await supabase
-    .from('games')
-    .update({
-      round_index: fromRoundIndex + 1,
-      round_started_at: new Date().toISOString(),
-      ...RESET_PLAYBACK_FIELDS,
-      ...extraPatch,
-    })
-    .eq('code', gameCode)
-    .eq('round_index', fromRoundIndex)
+// calls endGame instead once the match is decided. Guarded server-side by
+// round_index so if multiple clients race to advance the same round, only
+// the first write takes effect — the rest just match zero rows and are
+// harmless no-ops; every client converges on the same state via the
+// realtime subscription. Runs as the advance_round RPC (not a plain
+// .update()) so round_started_at is stamped from the database's own clock,
+// not the calling client's — see migrations/012_server_time_and_lightning_expiry.sql
+// for why that matters. tiebreakPlayerIds lets Elimination set/clear its own
+// column without a separate write.
+export async function advanceRound(gameCode, fromRoundIndex, tiebreakPlayerIds = []) {
+  const { error } = await supabase.rpc('advance_round', {
+    p_game_code: gameCode,
+    p_from_round_index: fromRoundIndex,
+    p_tiebreak_player_ids: tiebreakPlayerIds,
+  })
   if (error) throw error
 }
 
@@ -158,14 +168,11 @@ export async function startBonusMatch(gameCode, fromRoundIndex) {
 // [P1] Marks the moment both submissions are in and the reveal sequence (3s
 // countdown -> song 1 -> pause -> song 2 -> replay -> vote) begins. Guarded
 // so only the first client to notice sets it; the whole sequence is then
-// scheduled off this one shared timestamp on both devices.
+// scheduled off this one shared timestamp on both devices. Runs as the
+// start_reveal RPC so the timestamp comes from the database's own clock —
+// see migrations/012_server_time_and_lightning_expiry.sql.
 export async function startReveal(gameCode, roundIndex) {
-  const { error } = await supabase
-    .from('games')
-    .update({ reveal_started_at: new Date().toISOString() })
-    .eq('code', gameCode)
-    .eq('round_index', roundIndex)
-    .is('reveal_started_at', null)
+  const { error } = await supabase.rpc('start_reveal', { p_game_code: gameCode, p_round_index: roundIndex })
   if (error) throw error
 }
 

@@ -248,8 +248,9 @@ export default function RoundReveal({ game, code, orderedSubmissions, audioRef, 
 
   if (stage === 'transition') {
     return (
-      <div className="screen">
-        <h2>Vote for the best song</h2>
+      <div className="screen reveal-countdown">
+        <p className="eyebrow">All songs played</p>
+        <h2>🗳️ Vote for the best song</h2>
       </div>
     )
   }

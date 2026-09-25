@@ -3,7 +3,7 @@ import { GENRES } from './data/genres'
 import { drawPrompts, PROMPTS } from './data/prompts'
 import { supabase } from './lib/supabase'
 import { updateGameSettings } from './lib/room'
-import { advanceRound, endGame, eliminatePlayer } from './lib/game'
+import { advanceRound, endGame, eliminatePlayer, startMatch } from './lib/game'
 import { DEFAULT_ROUNDS, checkPointsLeagueOutcome } from './lib/pointsLeague'
 import { roundParticipants, lowestScorers, checkEliminationOutcome } from './lib/elimination'
 import { themedGenres } from './lib/theme'
@@ -159,14 +159,7 @@ export default function App() {
   // clients race to do this, only the first write takes effect.
   useEffect(() => {
     if (phase === 'wheel-waiting' && iAmLocked && allLocked && game?.status === 'wheel') {
-      supabase
-        .from('games')
-        .update({ status: 'playing', round_started_at: new Date().toISOString() })
-        .eq('code', code)
-        .eq('status', 'wheel')
-        .then(({ error: updateError }) => {
-          if (updateError) console.error(updateError)
-        })
+      startMatch(code).catch(console.error)
     }
   }, [phase, iAmLocked, allLocked, game?.status, code])
 
@@ -191,7 +184,7 @@ export default function App() {
       if (isElimination) {
         const lowest = lowestScorers(currentRoundResult.tally, currentRoundResult.participantIds)
         if (lowest.length > 1) {
-          await advanceRound(code, game.round_index, { tiebreak_player_ids: lowest })
+          await advanceRound(code, game.round_index, lowest)
           return
         }
         if (lowest.length === 1) {
@@ -205,7 +198,7 @@ export default function App() {
           if (remaining <= 1) {
             await endGame(code)
           } else {
-            await advanceRound(code, game.round_index, { tiebreak_player_ids: [] })
+            await advanceRound(code, game.round_index, [])
           }
         }
         return
