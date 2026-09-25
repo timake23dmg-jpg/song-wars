@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { submitSong, castVote, revealExpiredRound, fetchRoundSubmissions, fetchRoundVotes, roundPlayOrder } from '../lib/game'
 
+const DEFAULT_SUBMIT_SECONDS = 60
+const LIGHTNING_SUBMIT_SECONDS = 25 // flag to change — pragmatic default, not a spec'd number
+
 // Owns everything about the round currently being played: submission/vote
 // state scoped to *this* round specifically (guarding against the stale-
 // round-data race described below), the reveal/vote/announce sub-steps
@@ -33,11 +36,16 @@ export function useRoundState({ code, phase, game, players, roundPlayers, myPlay
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game?.round_index, game?.status])
 
+  // Lightning Round halves the submission window — everything else about
+  // the timeout/forfeit flow below is unchanged, it's purely how long the
+  // shared clock (round_started_at) gives players before it expires.
+  const submitSeconds = game?.mode === 'lightning_round' ? LIGHTNING_SUBMIT_SECONDS : DEFAULT_SUBMIT_SECONDS
   const initialSeconds = useMemo(() => {
-    if (!game?.round_started_at) return 60
+    if (!game?.round_started_at) return submitSeconds
     const elapsed = (Date.now() - new Date(game.round_started_at).getTime()) / 1000
-    return Math.max(0, Math.round(60 - elapsed))
-  }, [game?.round_index, game?.round_started_at])
+    return Math.max(0, Math.round(submitSeconds - elapsed))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.round_index, game?.round_started_at, submitSeconds])
 
   // roundSubmissions/roundVotes are cleared via an async fetch when a new
   // round starts, but game.round_index updates immediately via realtime —

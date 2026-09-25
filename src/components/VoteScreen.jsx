@@ -5,7 +5,7 @@ import SongBox from './SongBox'
 // One player's vote, for however many candidates are in this round (v3:
 // any number of players, not just 2). Self-voting is allowed by default —
 // see the "Self-voting" open decision in the original spec.
-export default function VoteScreen({ voter, submissions, hidePlayer, onVote }) {
+export default function VoteScreen({ voter, submissions, hidePlayer, seconds = 15, onVote }) {
   const [cast, setCast] = useState(false)
 
   function vote(idx) {
@@ -24,7 +24,7 @@ export default function VoteScreen({ voter, submissions, hidePlayer, onVote }) {
     <div className="screen vote-screen">
       <div className="search-header">
         <h2>{voter}, vote for the best song</h2>
-        <Timer seconds={15} running={!cast} onExpire={expire} />
+        <Timer seconds={seconds} running={!cast} onExpire={expire} />
       </div>
 
       <div className="song-box-grid">

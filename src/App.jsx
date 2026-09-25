@@ -365,6 +365,7 @@ export default function App() {
               voter={myLatest.name}
               submissions={orderedSubmissions}
               hidePlayer={isBlindMode}
+              seconds={game.mode === 'lightning_round' ? 8 : 15}
               onVote={handleVote}
             />
           )}

@@ -2,11 +2,19 @@ import { useEffect, useRef, useState } from 'react'
 import SongBox from './SongBox'
 import { startReveal, requestSkip, startReplay, finishReplay } from '../lib/game'
 
-const CLIP_MS = 20_000 // default between the spec's 15-30s range; flag to change
-const COUNTDOWN_MS = 3_000
-const PAUSE_MS = 5_000
-const REPLAY_WINDOW_MS = 5_000 // [P3] shortened from the spec's 10s per live playtest feedback
-const TRANSITION_MS = 2_000
+const DEFAULT_CLIP_MS = 20_000 // default between the spec's 15-30s range; flag to change
+const DEFAULT_COUNTDOWN_MS = 3_000
+const DEFAULT_PAUSE_MS = 5_000
+const DEFAULT_REPLAY_WINDOW_MS = 5_000 // [P3] shortened from the spec's 10s per live playtest feedback
+const DEFAULT_TRANSITION_MS = 2_000
+
+// Lightning Round's faster timings — flag to change, these are pragmatic
+// defaults rather than spec'd numbers, same as the base timings above.
+const LIGHTNING_CLIP_MS = 12_000
+const LIGHTNING_COUNTDOWN_MS = 2_000
+const LIGHTNING_PAUSE_MS = 2_500
+const LIGHTNING_REPLAY_WINDOW_MS = 3_000
+const LIGHTNING_TRANSITION_MS = 1_000
 
 // [P1]-[P4]: drives the whole "coin flip already decided -> 3s countdown ->
 // each song auto-plays in sequence (a 5s 'Up next' pause between each pair)
@@ -20,6 +28,13 @@ const TRANSITION_MS = 2_000
 // client independently schedules local timers against, rather than trying
 // to drive playback from a server push.
 export default function RoundReveal({ game, code, orderedSubmissions, audioRef, hidePlayer, onDone }) {
+  const lightning = game.mode === 'lightning_round'
+  const CLIP_MS = lightning ? LIGHTNING_CLIP_MS : DEFAULT_CLIP_MS
+  const COUNTDOWN_MS = lightning ? LIGHTNING_COUNTDOWN_MS : DEFAULT_COUNTDOWN_MS
+  const PAUSE_MS = lightning ? LIGHTNING_PAUSE_MS : DEFAULT_PAUSE_MS
+  const REPLAY_WINDOW_MS = lightning ? LIGHTNING_REPLAY_WINDOW_MS : DEFAULT_REPLAY_WINDOW_MS
+  const TRANSITION_MS = lightning ? LIGHTNING_TRANSITION_MS : DEFAULT_TRANSITION_MS
+
   const [stage, setStage] = useState('loading')
   const [countdownLeft, setCountdownLeft] = useState(Math.ceil(COUNTDOWN_MS / 1000))
   const [replayLeft, setReplayLeft] = useState(Math.ceil(REPLAY_WINDOW_MS / 1000))

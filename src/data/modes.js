@@ -33,9 +33,9 @@ export const MODES = [
   {
     id: 'lightning_round',
     name: 'Lightning Round',
-    description: 'Shorter timers, one song per matchup, quicker votes.',
+    description: 'Shorter timers on submitting, playback and voting.',
     minPlayers: 2,
-    available: false,
+    available: true,
   },
 ]
 
