@@ -43,6 +43,9 @@ create table if not exists games (
   -- src/lib/pointsLeague.js) so every client agrees on when the match ends.
   mode text not null default 'points_league',
   difficulty text not null default 'hard' check (difficulty in ('easy', 'medium', 'hard')),
+  -- Theme Night: a theme id from src/data/themes.js, or null for no theme
+  -- (every other mode ignores this column entirely).
+  theme text,
   total_rounds int not null default 7,
   -- Elimination mode: empty = a normal round (every active player
   -- competes); non-empty = a tiebreak mini-round scoped to just these

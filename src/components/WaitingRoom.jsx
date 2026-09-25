@@ -1,9 +1,11 @@
 import { MODES, DIFFICULTIES } from '../data/modes'
+import { THEMES } from '../data/themes'
 
-export default function WaitingRoom({ code, players, isHost, game, onSetMode, onSetDifficulty, onStart, starting }) {
+export default function WaitingRoom({ code, players, isHost, game, onSetMode, onSetDifficulty, onSetTheme, onStart, starting }) {
   const playerCount = players.length
   const selectedMode = MODES.find((m) => m.id === game?.mode) || MODES[0]
-  const eligible = selectedMode.available && playerCount >= selectedMode.minPlayers
+  const isThemeNight = selectedMode.id === 'theme_night'
+  const eligible = selectedMode.available && playerCount >= selectedMode.minPlayers && (!isThemeNight || !!game?.theme)
 
   return (
     <div className="screen">
@@ -48,6 +50,27 @@ export default function WaitingRoom({ code, players, isHost, game, onSetMode, on
         </div>
       </div>
 
+      {isThemeNight && (
+        <div className="lobby-section">
+          <p className="eyebrow">Theme</p>
+          <div className="mode-grid">
+            {THEMES.map((t) => {
+              const selected = game?.theme === t.id
+              return (
+                <button
+                  key={t.id}
+                  className={`mode-tile ${selected ? 'mode-tile-selected' : ''}`}
+                  onClick={() => isHost && onSetTheme(t.id)}
+                  disabled={!isHost}
+                >
+                  <strong>{t.name}</strong>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="lobby-section">
         <p className="eyebrow">Difficulty</p>
         <div className="mode-grid">
@@ -70,7 +93,13 @@ export default function WaitingRoom({ code, players, isHost, game, onSetMode, on
 
       {isHost ? (
         <button className="btn btn-primary" onClick={onStart} disabled={!eligible || starting}>
-          {starting ? 'Starting…' : eligible ? 'Start game' : `Waiting for ${selectedMode.minPlayers}+ players`}
+          {starting
+            ? 'Starting…'
+            : eligible
+            ? 'Start game'
+            : isThemeNight && !game?.theme
+            ? 'Pick a theme to start'
+            : `Waiting for ${selectedMode.minPlayers}+ players`}
         </button>
       ) : (
         <p className="hint">Waiting for the host to start…</p>

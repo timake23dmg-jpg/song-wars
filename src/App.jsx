@@ -6,6 +6,8 @@ import { updateGameSettings } from './lib/room'
 import { advanceRound, endGame, eliminatePlayer } from './lib/game'
 import { DEFAULT_ROUNDS, checkPointsLeagueOutcome } from './lib/pointsLeague'
 import { roundParticipants, lowestScorers, checkEliminationOutcome } from './lib/elimination'
+import { themedGenres } from './lib/theme'
+import { themeById } from './data/themes'
 import { useAudioPriming } from './hooks/useAudioPriming'
 import { useRoomConnection } from './hooks/useRoomConnection'
 import { useRoundState } from './hooks/useRoundState'
@@ -116,6 +118,18 @@ export default function App() {
       setError(err.message || 'Could not update the difficulty.')
     }
   }
+
+  async function handleSetTheme(theme) {
+    try {
+      await updateGameSettings(code, { theme })
+    } catch (err) {
+      setError(err.message || 'Could not update the theme.')
+    }
+  }
+
+  // Theme Night restricts which genres/artists the wheel can land on;
+  // every other mode spins from the full, unrestricted pool.
+  const wheelGenres = game?.mode === 'theme_night' ? themedGenres(themeById(game.theme)) : GENRES
 
   function lockGenre(genre) {
     setMyGenre(genre)
@@ -253,6 +267,7 @@ export default function App() {
           game={game}
           onSetMode={handleSetMode}
           onSetDifficulty={handleSetDifficulty}
+          onSetTheme={handleSetTheme}
           onStart={startGame}
           starting={starting}
         />
@@ -260,7 +275,7 @@ export default function App() {
 
       {phase === 'wheel-genre' && (
         <div className="screen">
-          <Wheel options={GENRES} title="Spin for Genre" resultLabel="Your genre" onResult={lockGenre} />
+          <Wheel options={wheelGenres} title="Spin for Genre" resultLabel="Your genre" onResult={lockGenre} />
         </div>
       )}
 
