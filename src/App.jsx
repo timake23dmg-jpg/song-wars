@@ -3,8 +3,9 @@ import { GENRES } from './data/genres'
 import { drawPrompts, PROMPTS } from './data/prompts'
 import { supabase } from './lib/supabase'
 import { updateGameSettings } from './lib/room'
-import { advanceRound, endGame } from './lib/game'
+import { advanceRound, endGame, eliminatePlayer } from './lib/game'
 import { DEFAULT_ROUNDS, checkPointsLeagueOutcome } from './lib/pointsLeague'
+import { roundParticipants, lowestScorers, checkEliminationOutcome } from './lib/elimination'
 import { useAudioPriming } from './hooks/useAudioPriming'
 import { useRoomConnection } from './hooks/useRoomConnection'
 import { useRoundState } from './hooks/useRoundState'
@@ -31,6 +32,9 @@ export default function App() {
     useRoomConnection(code)
 
   const myLatest = players.find((p) => p.id === myPlayer?.id) || myPlayer
+  const isElimination = game?.mode === 'elimination'
+  const roundPlayers = game ? roundParticipants(game, players) : players
+  const iAmInRound = roundPlayers.some((p) => p.id === myPlayer?.id)
 
   const {
     timedOut,
@@ -55,6 +59,7 @@ export default function App() {
     phase,
     game,
     players,
+    roundPlayers,
     myPlayer,
     roundSubmissions,
     roundVotes,
@@ -81,8 +86,8 @@ export default function App() {
     setError(null)
     try {
       // Draw the whole pool, shuffled — more than enough for a Points League
-      // match of DEFAULT_ROUNDS rounds, with headroom to raise the round
-      // count later without running out.
+      // match of DEFAULT_ROUNDS rounds (or however many an Elimination match
+      // ends up taking), with headroom to spare.
       const prompts = drawPrompts(PROMPTS.length)
       const { error: updateError } = await supabase
         .from('games')
@@ -161,11 +166,36 @@ export default function App() {
     if (phase !== 'round-loop') setPhase('round-loop')
   }, [game, phase])
 
-  // Checks whether the Points League match is decided (every round of
-  // total_rounds played); if so, ends the game, otherwise advances to the
-  // next round.
+  // Points League: checks whether every round of total_rounds has been
+  // played. Elimination: checks the round's full vote tally for a tie at
+  // the bottom — a tie routes into a tiebreak mini-round scoped to just
+  // those players instead of eliminating anyone yet; a unique lowest
+  // scorer gets eliminated, ending the game if only one player is left.
   async function handleContinueRound() {
     try {
+      if (isElimination) {
+        const lowest = lowestScorers(currentRoundResult.tally, currentRoundResult.participantIds)
+        if (lowest.length > 1) {
+          await advanceRound(code, game.round_index, { tiebreak_player_ids: lowest })
+          return
+        }
+        if (lowest.length === 1) {
+          // Computed from the room's active count *before* this elimination
+          // (already accurate for every earlier elimination via realtime),
+          // not by re-reading local state right after the write — avoids a
+          // race against that write's own realtime update landing in time.
+          const activeBeforeThisElimination = players.filter((p) => !p.eliminated_at).length
+          await eliminatePlayer(code, lowest[0])
+          const remaining = activeBeforeThisElimination - 1
+          if (remaining <= 1) {
+            await endGame(code)
+          } else {
+            await advanceRound(code, game.round_index, { tiebreak_player_ids: [] })
+          }
+        }
+        return
+      }
+
       const outcome = checkPointsLeagueOutcome(history, game.total_rounds, players)
       if (!outcome) {
         await advanceRound(code, game.round_index)
@@ -181,12 +211,27 @@ export default function App() {
     window.location.reload()
   }
 
-  const finalOutcome = checkPointsLeagueOutcome(history, game?.total_rounds ?? DEFAULT_ROUNDS, players) || {
-    winners: [],
-  }
+  const finalOutcome = isElimination
+    ? { winners: checkEliminationOutcome(players) ? [checkEliminationOutcome(players)] : [] }
+    : checkPointsLeagueOutcome(history, game?.total_rounds ?? DEFAULT_ROUNDS, players) || { winners: [] }
 
-  const notSubmittedCount = Math.max(0, players.length - submittedCount)
-  const notVotedCount = Math.max(0, players.length - voteCount)
+  const notSubmittedCount = Math.max(0, roundPlayers.length - submittedCount)
+  const notVotedCount = Math.max(0, roundPlayers.length - voteCount)
+  const isTiebreak = isElimination && (game?.tiebreak_player_ids?.length || 0) > 0
+  const eliminationNote =
+    isElimination && currentRoundResult
+      ? (() => {
+          const lowest = lowestScorers(currentRoundResult.tally, currentRoundResult.participantIds)
+          if (lowest.length > 1) return "Tie for fewest votes — a tiebreak round decides who's out."
+          const outPlayer = players.find((p) => p.id === lowest[0])
+          return outPlayer ? `${outPlayer.name} had the fewest votes and is eliminated.` : null
+        })()
+      : null
+  const roundLabelText = isElimination
+    ? isTiebreak
+      ? 'Tiebreak Round'
+      : `Round ${game?.round_index + 1} · ${roundPlayers.length} players left`
+    : `Round ${game?.round_index + 1} of ${game?.total_rounds}`
 
   return (
     <div className="app">
@@ -242,15 +287,29 @@ export default function App() {
         </div>
       )}
 
-      {phase === 'round-loop' && game && players.length >= 2 && !roundAnnounced && (
+      {phase === 'round-loop' && game && players.length >= 2 && myLatest?.eliminated_at && (
+        <div className="screen">
+          <h2>You've been eliminated</h2>
+          <p className="hint">Still watching — the game continues without you until there's a winner.</p>
+        </div>
+      )}
+
+      {phase === 'round-loop' && game && players.length >= 2 && !myLatest?.eliminated_at && !iAmInRound && (
+        <div className="screen">
+          <h2>Sitting this one out</h2>
+          <p className="hint">A tiebreak round is happening between two other players — back after it resolves.</p>
+        </div>
+      )}
+
+      {phase === 'round-loop' && game && players.length >= 2 && iAmInRound && !roundAnnounced && (
         <RoundAnnounce
-          label={`Round ${game.round_index + 1} of ${game.total_rounds}`}
-          scores={currentMatchScores}
+          label={roundLabelText}
+          scores={isElimination ? {} : currentMatchScores}
           onDone={() => setRoundAnnounced(true)}
         />
       )}
 
-      {phase === 'round-loop' && game && players.length >= 2 && roundAnnounced && (
+      {phase === 'round-loop' && game && players.length >= 2 && iAmInRound && roundAnnounced && (
         <>
           {roundStage === 'submitting' && (
             <SongSearch
@@ -266,9 +325,7 @@ export default function App() {
 
           {roundStage === 'waiting-submissions' && (
             <div className="screen">
-              <p className="eyebrow">
-                Round {game.round_index + 1} of {game.total_rounds}
-              </p>
+              <p className="eyebrow">{roundLabelText}</p>
               <h2>You submitted {mySubmissionRow.track.title}</h2>
               <p className="hint">
                 Waiting for {notSubmittedCount} more player{notSubmittedCount === 1 ? '' : 's'}…
@@ -308,9 +365,16 @@ export default function App() {
           {roundStage === 'done' && currentRoundResult && (
             <RoundScore
               result={currentRoundResult}
-              scores={currentMatchScores}
-              roundLabel={`Round ${game.round_index + 1} of ${game.total_rounds}`}
-              continueLabel={checkPointsLeagueOutcome(history, game.total_rounds, players) ? 'See results' : 'Next round'}
+              scores={isElimination ? {} : currentMatchScores}
+              roundLabel={roundLabelText}
+              note={eliminationNote}
+              continueLabel={
+                isElimination
+                  ? 'Continue'
+                  : checkPointsLeagueOutcome(history, game.total_rounds, players)
+                  ? 'See results'
+                  : 'Next round'
+              }
               onContinue={handleContinueRound}
             />
           )}
@@ -318,7 +382,12 @@ export default function App() {
       )}
 
       {phase === 'end' && (
-        <EndScreen winners={finalOutcome.winners} scores={currentMatchScores} history={history} onRestart={restart} />
+        <EndScreen
+          winners={finalOutcome.winners}
+          scores={isElimination ? {} : currentMatchScores}
+          history={history}
+          onRestart={restart}
+        />
       )}
     </div>
   )

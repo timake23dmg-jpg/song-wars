@@ -9,7 +9,14 @@ import { submitSong, castVote, revealExpiredRound, fetchRoundSubmissions, fetchR
 // number of players (2 to whatever the room has) rather than a hardcoded
 // "me vs. opponent" — see ROUND OUTCOME RULES below for how partial
 // submissions are handled.
-export function useRoundState({ code, phase, game, players, myPlayer, roundSubmissions, roundVotes, setRoundSubmissions, setRoundVotes, setError }) {
+//
+// `players` is every player in the room (used for name lookups and things
+// that don't change per-round); `roundPlayers` is who's actually competing
+// in the *current* round — normally the same as `players` (Points League),
+// but a strict subset for an Elimination tiebreak mini-round (see
+// lib/elimination.js's roundParticipants). Every "did everyone submit/vote"
+// check is against roundPlayers, not the full room.
+export function useRoundState({ code, phase, game, players, roundPlayers, myPlayer, roundSubmissions, roundVotes, setRoundSubmissions, setRoundVotes, setError }) {
   const [timedOut, setTimedOut] = useState(false)
   const [revealDone, setRevealDone] = useState(false)
   const [roundAnnounced, setRoundAnnounced] = useState(false)
@@ -50,11 +57,11 @@ export function useRoundState({ code, phase, game, players, myPlayer, roundSubmi
 
   const mySubmissionRow = currentRoundSubmissions.find((s) => s.player_id === myPlayer?.id) || null
   const iSubmitted = !!mySubmissionRow
-  const allSubmitted = players.length > 0 && currentRoundSubmissions.length === players.length
+  const allSubmitted = roundPlayers.length > 0 && currentRoundSubmissions.length === roundPlayers.length
   const submittedCount = currentRoundSubmissions.length
 
   const myVoteRow = currentRoundVotes.find((v) => v.voter_player_id === myPlayer?.id) || null
-  const allVoted = players.length > 0 && currentRoundVotes.length === players.length
+  const allVoted = roundPlayers.length > 0 && currentRoundVotes.length === roundPlayers.length
 
   // ROUND OUTCOME RULES (generalized from the 2-player version):
   // - Everyone submits -> normal reveal + vote among all of them.
@@ -100,20 +107,27 @@ export function useRoundState({ code, phase, game, players, myPlayer, roundSubmi
 
   // Record each round's outcome exactly once, whether it resolved by
   // everyone voting, a forfeit auto-win/tie, or a partial-submission vote.
+  // Always records the full vote tally + who was in the round alongside the
+  // winner — Points League only uses winner/winningTrack, but Elimination
+  // mode needs the full tally to find the lowest scorer(s) (see
+  // lib/elimination.js), and it's simpler to always compute this once here
+  // than to have each mode re-derive it from raw votes separately.
   useEffect(() => {
-    if (phase !== 'round-loop' || !game || players.length === 0) return
+    if (phase !== 'round-loop' || !game || roundPlayers.length === 0) return
     const idx = game.round_index
     if (history.some((h) => h.roundIndex === idx)) return
+
+    const tally = {}
+    currentRoundVotes.forEach((v) => {
+      if (v.voted_for_player_id) tally[v.voted_for_player_id] = (tally[v.voted_for_player_id] || 0) + 1
+    })
+    const participantIds = roundPlayers.map((p) => p.id)
 
     let outcome = null
     if (readyForRevealAndVote && allVoted) {
       // Tally votes by who they were cast for, not by array position — this
       // is what lets it work for any number of candidates without needing a
       // fixed-size slot array.
-      const tally = {}
-      currentRoundVotes.forEach((v) => {
-        if (v.voted_for_player_id) tally[v.voted_for_player_id] = (tally[v.voted_for_player_id] || 0) + 1
-      })
       const entries = Object.entries(tally)
       const max = entries.length ? Math.max(...entries.map(([, c]) => c)) : 0
       const topIds = entries.filter(([, c]) => c === max).map(([id]) => id)
@@ -140,9 +154,19 @@ export function useRoundState({ code, phase, game, players, myPlayer, roundSubmi
       // — belt-and-braces against this effect's body running more than once
       // for the same round before a re-render lets the outer guard see it.
       if (prev.some((h) => h.roundIndex === idx)) return prev
-      return [...prev, { roundIndex: idx, prompt: game.prompts[idx], winner: outcome.winner, winningTrack: outcome.winningTrack }]
+      return [
+        ...prev,
+        {
+          roundIndex: idx,
+          prompt: game.prompts[idx],
+          winner: outcome.winner,
+          winningTrack: outcome.winningTrack,
+          tally,
+          participantIds,
+        },
+      ]
     })
-  }, [phase, game, players, currentRoundSubmissions, currentRoundVotes, readyForRevealAndVote, allVoted, isAutoWinByForfeit, isTieByForfeit])
+  }, [phase, game, players, roundPlayers, currentRoundSubmissions, currentRoundVotes, readyForRevealAndVote, allVoted, isAutoWinByForfeit, isTieByForfeit])
 
   async function handleSubmitSong(track) {
     try {

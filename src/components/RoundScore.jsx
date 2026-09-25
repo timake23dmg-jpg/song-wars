@@ -1,4 +1,4 @@
-export default function RoundScore({ result, scores, roundLabel, continueLabel, onContinue }) {
+export default function RoundScore({ result, scores, roundLabel, continueLabel, note, onContinue }) {
   return (
     <div className="screen round-score">
       <p className="eyebrow">{roundLabel}</p>
@@ -9,6 +9,7 @@ export default function RoundScore({ result, scores, roundLabel, continueLabel, 
       ) : (
         <h2>It's a tie — no point awarded this round</h2>
       )}
+      {note && <p className="hint">{note}</p>}
 
       <div className="scoreboard">
         {Object.entries(scores).map(([name, pts]) => (

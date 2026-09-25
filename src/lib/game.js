@@ -54,22 +54,32 @@ const RESET_PLAYBACK_FIELDS = {
 }
 
 // Advances to the next round. Never ends the game itself — the caller
-// decides that (see checkPointsLeagueOutcome in src/lib/pointsLeague.js)
-// and calls endGame instead once the match's total_rounds is reached.
-// Guarded by .eq('round_index', ...) so if multiple clients race to
-// advance the same round, only the first write takes effect — the rest
-// just match zero rows and are harmless no-ops; every client converges on
-// the same state via the realtime subscription.
-export async function advanceRound(gameCode, fromRoundIndex) {
+// decides that (see checkPointsLeagueOutcome / checkEliminationOutcome) and
+// calls endGame instead once the match is decided. Guarded by
+// .eq('round_index', ...) so if multiple clients race to advance the same
+// round, only the first write takes effect — the rest just match zero rows
+// and are harmless no-ops; every client converges on the same state via the
+// realtime subscription. extraPatch lets a mode layer on its own fields
+// (e.g. Elimination sets/clears tiebreak_player_ids) without duplicating
+// this guarded-write pattern.
+export async function advanceRound(gameCode, fromRoundIndex, extraPatch = {}) {
   const { error } = await supabase
     .from('games')
     .update({
       round_index: fromRoundIndex + 1,
       round_started_at: new Date().toISOString(),
       ...RESET_PLAYBACK_FIELDS,
+      ...extraPatch,
     })
     .eq('code', gameCode)
     .eq('round_index', fromRoundIndex)
+  if (error) throw error
+}
+
+// Elimination mode: marks a player eliminated (idempotent — eliminating an
+// already-eliminated player is a harmless no-op, so no guard is needed).
+export async function eliminatePlayer(gameCode, playerId) {
+  const { error } = await supabase.rpc('eliminate_player', { p_game_code: gameCode, p_player_id: playerId })
   if (error) throw error
 }
 
