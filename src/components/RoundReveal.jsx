@@ -19,7 +19,7 @@ const TRANSITION_MS = 2_000
 // Safari allows later scripted playback) and shared timestamps that every
 // client independently schedules local timers against, rather than trying
 // to drive playback from a server push.
-export default function RoundReveal({ game, code, orderedSubmissions, audioRef, onDone }) {
+export default function RoundReveal({ game, code, orderedSubmissions, audioRef, hidePlayer, onDone }) {
   const [stage, setStage] = useState('loading')
   const [countdownLeft, setCountdownLeft] = useState(Math.ceil(COUNTDOWN_MS / 1000))
   const [replayLeft, setReplayLeft] = useState(Math.ceil(REPLAY_WINDOW_MS / 1000))
@@ -221,7 +221,11 @@ export default function RoundReveal({ game, code, orderedSubmissions, audioRef, 
       <div className="screen">
         <p className="eyebrow">Up next</p>
         <div className="song-box-row song-box-row-single">
-          <SongBox track={orderedSubmissions[nextUpIdx].track} playerName={orderedSubmissions[nextUpIdx].player} />
+          <SongBox
+            track={orderedSubmissions[nextUpIdx].track}
+            playerName={orderedSubmissions[nextUpIdx].player}
+            hidePlayer={hidePlayer}
+          />
         </div>
       </div>
     )
@@ -249,6 +253,7 @@ export default function RoundReveal({ game, code, orderedSubmissions, audioRef, 
               key={idx}
               track={s.track}
               playerName={s.player}
+              hidePlayer={hidePlayer}
               playing={nowPlayingIdx === idx}
               badge={nowPlayingIdx === idx ? 'Now playing' : used ? 'Replayed' : isReplayable ? 'Tap to replay' : null}
               onClick={isReplayable ? () => tapReplay(idx) : undefined}
