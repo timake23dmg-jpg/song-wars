@@ -28,7 +28,7 @@ export const MODES = [
     name: 'Blind Mode',
     description: 'Submissions stay anonymous through playback and voting.',
     minPlayers: 2,
-    available: false,
+    available: true,
   },
   {
     id: 'lightning_round',

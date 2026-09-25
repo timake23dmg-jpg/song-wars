@@ -5,7 +5,7 @@ import SongBox from './SongBox'
 // One player's vote, for however many candidates are in this round (v3:
 // any number of players, not just 2). Self-voting is allowed by default —
 // see the "Self-voting" open decision in the original spec.
-export default function VoteScreen({ voter, submissions, onVote }) {
+export default function VoteScreen({ voter, submissions, hidePlayer, onVote }) {
   const [cast, setCast] = useState(false)
 
   function vote(idx) {
@@ -29,7 +29,14 @@ export default function VoteScreen({ voter, submissions, onVote }) {
 
       <div className="song-box-grid">
         {submissions.map((s, idx) => (
-          <SongBox key={idx} track={s.track} playerName={s.player} onClick={() => vote(idx)} disabled={cast} />
+          <SongBox
+            key={idx}
+            track={s.track}
+            playerName={s.player}
+            hidePlayer={hidePlayer}
+            onClick={() => vote(idx)}
+            disabled={cast}
+          />
         ))}
       </div>
 

@@ -35,6 +35,7 @@ export default function App() {
 
   const myLatest = players.find((p) => p.id === myPlayer?.id) || myPlayer
   const isElimination = game?.mode === 'elimination'
+  const isBlindMode = game?.mode === 'blind_mode'
   const roundPlayers = game ? roundParticipants(game, players) : players
   const iAmInRound = roundPlayers.some((p) => p.id === myPlayer?.id)
 
@@ -354,12 +355,18 @@ export default function App() {
               code={code}
               orderedSubmissions={orderedSubmissions}
               audioRef={audioRef}
+              hidePlayer={isBlindMode}
               onDone={() => setRevealDone(true)}
             />
           )}
 
           {roundStage === 'voting' && orderedSubmissions.length > 0 && (
-            <VoteScreen voter={myLatest.name} submissions={orderedSubmissions} onVote={handleVote} />
+            <VoteScreen
+              voter={myLatest.name}
+              submissions={orderedSubmissions}
+              hidePlayer={isBlindMode}
+              onVote={handleVote}
+            />
           )}
 
           {roundStage === 'waiting-votes' && (
